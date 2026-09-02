@@ -1,5 +1,5 @@
 /**
- * Development server: rebuild on change, serve out/ over http://localhost:3000.
+ * Development server: rebuild on change, serve dist/ over http://localhost:3000.
  *
  * getUserMedia needs a secure context, and localhost counts as one — so the microphone
  * works here without TLS.
@@ -8,7 +8,7 @@ import { $ } from "bun";
 import { cp, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-const OUT = "out";
+const OUT = "dist";
 const PORT = Number(process.env.PORT ?? 3000);
 
 await rm(OUT, { recursive: true, force: true });

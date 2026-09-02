@@ -1,9 +1,11 @@
 /**
- * Production build: bundle the SPA into out/, copy the verbatim assets (the WebAssembly
+ * Production build: bundle the SPA into dist/, copy the verbatim assets (the WebAssembly
  * banks, the worker and the audio worklet), then check the result against the DataVec
  * deploy caps so a violation fails here rather than at publish time.
  *
- *   bun run build        (the DataVec builder runs `bun --bun run build`)
+ * The output directory is `dist/` because that is what the bake looks for:
+ * customer-bake-remote.sh runs `bun install && $SITE_BUILD_CMD` (default `bun run build`)
+ * and then requires `$SITE_DIST_DIR/` (default `dist`) to exist.
  */
 import { $ } from "bun";
 import { cp, mkdir, readdir, rm, stat } from "node:fs/promises";
@@ -15,7 +17,7 @@ const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 50 * 1024 * 1024;
 const MAX_PATH = 255;
 
-const OUT = "out";
+const OUT = "dist";
 
 async function walk(dir: string, base = dir): Promise<string[]> {
   const out: string[] = [];

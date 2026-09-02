@@ -36,7 +36,7 @@ bun dev        # http://localhost:3000  (localhost is a secure context, so the m
 Production build and tests:
 
 ```sh
-bun run build  # -> out/
+bun run build  # -> dist/
 bun test       # instantiates both .wasm banks and checks the frames they produce
 ```
 
@@ -138,13 +138,17 @@ browser shim `bank_wasm.c`.
 The build is a plain static bundle, so any static host will serve it. It must be served
 over HTTPS (or localhost) — `getUserMedia` requires a secure context.
 
-For DataVec's static-site bake, the defaults already match:
+For DataVec's bake (`customer-bake-remote.sh`), the defaults already match — no env
+overrides needed:
 
 | Setting | Value |
 |---|---|
-| `SITE_BUILD_CMD` | `bun --bun run build` (the default) |
-| `SITE_DIST_DIR` | `out` (the default) |
+| `SITE_BUILD_CMD` | `bun run build` (the default) |
+| `SITE_DIST_DIR` | `dist` (the default) |
 | `SITE_TEST_CMD` | `bun test` (optional, recommended) |
+
+There is no `handlers/` directory, so the bake's transpile step is a no-op and this deploys
+as a static-only site.
 
 `bun run build` enforces the deploy caps locally — 5000 files, 10 MiB per file, 50 MiB
 total, no symlinks — and fails the build rather than the publish if one is exceeded. The
