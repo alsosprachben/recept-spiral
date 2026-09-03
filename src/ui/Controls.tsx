@@ -9,6 +9,9 @@ interface Props {
   setView: (v: ViewParams) => void;
   renderer: "auto" | "canvas2d";
   setRenderer: (r: "auto" | "canvas2d") => void;
+  autoScale: boolean;
+  setAutoScale: (a: boolean) => void;
+  autoNote: string;
   micState: MicState;
   micInfo: string;
   onStart: () => void;
@@ -72,8 +75,8 @@ function NumberField(props: {
 }
 
 export function Controls(props: Props) {
-  const { bank, setBank, view, setView, renderer, setRenderer, micState, micInfo,
-    onStart, onStop, collapsed, setCollapsed } = props;
+  const { bank, setBank, view, setView, renderer, setRenderer, autoScale, setAutoScale,
+    autoNote, micState, micInfo, onStart, onStop, collapsed, setCollapsed } = props;
   const running = micState === "running" || micState === "starting";
   const receptors = bank.bins * bank.octaves * 3;
 
@@ -129,10 +132,20 @@ export function Controls(props: Props) {
                 <option value="f64">float64 — matches native exactly</option>
               </select>
             </label>
+            <label className="row">
+              <span>keep within budget</span>
+              <input
+                type="checkbox"
+                checked={autoScale}
+                onChange={(e) => setAutoScale(e.target.checked)}
+                title="Give up bin density (and float64) automatically when the bank cannot keep up"
+              />
+            </label>
             <div className="note">
               {receptors.toLocaleString()} receptors ·{" "}
               {(bank.fRef).toFixed(1)}–{(bank.fRef * Math.pow(2, bank.octaves)).toFixed(0)} Hz
             </div>
+            {autoNote ? <div className="note warn">{autoNote}</div> : null}
             <button
               className={running ? "action stop" : "action"}
               onClick={running ? onStop : onStart}

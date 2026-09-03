@@ -19,9 +19,13 @@ const BANDWIDTH_FACTOR = 1.0;
 /** no frames for this long while running counts as a stall */
 const STALL_MS = 2000;
 
+/** cache buster for the assets the bundler does not content-hash */
+const V = `?v=${__BUILD_ID__}`;
+
 function initMessage(params: BankParams, sampleRate: number) {
   return {
     type: "init" as const,
+    version: __BUILD_ID__,
     sampleRate,
     bins: params.bins,
     octaves: params.octaves,
@@ -177,9 +181,9 @@ export function useMicBank(
         if (ctx.state !== "running") void ctx.resume().catch(() => {});
       };
       if (ctx.state !== "running") await ctx.resume();
-      await ctx.audioWorklet.addModule("mic-worklet.js");
+      await ctx.audioWorklet.addModule(`mic-worklet.js${V}`);
 
-      const worker = new Worker("mic-worker.js");
+      const worker = new Worker(`mic-worker.js${V}`);
       workerRef.current = worker;
 
       worker.onmessage = (ev: MessageEvent) => {

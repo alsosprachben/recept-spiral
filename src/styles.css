@@ -128,6 +128,7 @@ button.action:disabled { opacity: 0.5; cursor: default; }
 
 .note { margin-top: 6px; color: var(--dim); }
 .note.err { color: #ff9b8a; }
+.note.warn { color: #ffcf7a; }
 
 /* ---- start overlay ---- */
 .overlay {

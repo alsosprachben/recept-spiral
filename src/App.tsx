@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { DEFAULT_BANK, DEFAULT_VIEW } from "./lib/types";
 import type { BankParams, BankStats, RenderStats, ViewParams } from "./lib/types";
+import { useAutoScale } from "./lib/useAutoScale";
 import { useMicBank } from "./lib/useMicBank";
 import { SpiralView } from "./render/SpiralView";
 import type { SpiralHandle } from "./render/SpiralView";
@@ -11,6 +12,7 @@ export function App() {
   const [bank, setBank] = useState<BankParams>(DEFAULT_BANK);
   const [view, setView] = useState<ViewParams>(DEFAULT_VIEW);
   const [renderer, setRenderer] = useState<"auto" | "canvas2d">("auto");
+  const [autoScale, setAutoScale] = useState(true);
   const [collapsed, setCollapsed] = useState(false);
   const [stats, setStats] = useState<{ render: RenderStats | null; bank: BankStats | null }>({
     render: null,
@@ -36,7 +38,10 @@ export function App() {
     setStats({ render, bank: bankStatsRef.current });
   }, []);
 
-  const mic = useMicBank(bank, onFrame, onReset);
+  const sampleBank = useCallback(() => bankStatsRef.current, []);
+  const auto = useAutoScale(bank, autoScale, sampleBank);
+
+  const mic = useMicBank(auto.effective, onFrame, onReset);
   const running = mic.state === "running" || mic.state === "starting";
 
   return (
@@ -50,6 +55,9 @@ export function App() {
         setView={setView}
         renderer={renderer}
         setRenderer={setRenderer}
+        autoScale={autoScale}
+        setAutoScale={setAutoScale}
+        autoNote={auto.note}
         micState={mic.state}
         micInfo={mic.info}
         onStart={mic.start}

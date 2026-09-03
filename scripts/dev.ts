@@ -13,11 +13,12 @@ const PORT = Number(process.env.PORT ?? 3000);
 
 await rm(OUT, { recursive: true, force: true });
 await mkdir(OUT, { recursive: true });
-await $`bun build src/index.html --outdir ${OUT}`;
+const DEFINE = `__BUILD_ID__="dev"`;
+await $`bun build src/index.html --outdir ${OUT} --define ${DEFINE}`;
 await cp("public", OUT, { recursive: true });
 
 // keep the bundle fresh; public/ is copied once above and watched below
-const watcher = Bun.spawn(["bun", "build", "src/index.html", "--outdir", OUT, "--watch"], {
+const watcher = Bun.spawn(["bun", "build", "src/index.html", "--outdir", OUT, "--define", DEFINE, "--watch"], {
   stdout: "inherit",
   stderr: "inherit",
 });

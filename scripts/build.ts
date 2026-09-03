@@ -11,6 +11,22 @@ import { $ } from "bun";
 import { cp, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 
+/**
+ * Bun content-hashes the bundle it emits, but the files copied verbatim from public/ keep
+ * stable names — so a browser that cached mic-worklet.js or bank.wasm would keep the old
+ * copy across a deploy and silently miss a fix. Hash their contents and hand the result to
+ * the app, which appends it as a query string when it loads them.
+ */
+async function assetVersion(): Promise<string> {
+  const names = (await readdir("public")).sort();
+  const hasher = new Bun.CryptoHasher("sha256");
+  for (const name of names) {
+    hasher.update(name);
+    hasher.update(new Uint8Array(await Bun.file(join("public", name)).arrayBuffer()));
+  }
+  return hasher.digest("hex").slice(0, 12);
+}
+
 // Caps enforced by POST /api/deploy/<slug>; see mnvkd static-site-bake.md.
 const MAX_FILES = 5000;
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
@@ -38,10 +54,14 @@ async function main() {
   await rm(OUT, { recursive: true, force: true });
   await mkdir(OUT, { recursive: true });
 
+  const version = await assetVersion();
+
   // The HTML entry point pulls in index.tsx and styles.css; Bun bundles and hashes them.
   // NODE_ENV must be defined explicitly or React's development build — larger, and far
   // slower for the 60 Hz control updates — is what ships.
-  await $`bun build src/index.html --outdir ${OUT} --minify --define ${'process.env.NODE_ENV="production"'}`;
+  await $`bun build src/index.html --outdir ${OUT} --minify \
+    --define ${'process.env.NODE_ENV="production"'} \
+    --define ${`__BUILD_ID__="${version}"`}`;
 
   // Verbatim assets: the worker and worklet are loaded by URL, not imported, and the .wasm
   // files are fetched at runtime — none of them are part of the module graph.
@@ -76,8 +96,8 @@ async function main() {
   }
 
   console.log(
-    `built ${OUT}/: ${files.length} files, ${(total / 1024).toFixed(0)} KiB ` +
-    `(caps: ${MAX_FILES} files, 10 MiB/file, 50 MiB total)`,
+    `built ${OUT}/: ${files.length} files, ${(total / 1024).toFixed(0)} KiB, ` +
+    `asset version ${version} (caps: ${MAX_FILES} files, 10 MiB/file, 50 MiB total)`,
   );
 }
 

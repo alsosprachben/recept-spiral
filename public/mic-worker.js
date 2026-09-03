@@ -88,7 +88,9 @@ function handleAudio(samples) {
 }
 
 async function handleInit(d) {
-  const file = d.precision === "f64" ? "bank.wasm" : "bank_f32.wasm";
+  // the version query matches the one the page uses, so a deploy never serves a stale bank
+  const file = (d.precision === "f64" ? "bank.wasm" : "bank_f32.wasm") +
+    (d.version ? `?v=${d.version}` : "");
   if (!wasm || wasmFile !== file) await load(file);
   sampleRate = d.sampleRate;
   const sensors = wasm.exports.bank_wasm_init(
