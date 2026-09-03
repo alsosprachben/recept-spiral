@@ -84,6 +84,18 @@ export interface BankStats {
   blockMs: number;
 }
 
+/**
+ * Capture-side health. `blocksPerSec` counts the 128-sample blocks the AudioWorklet
+ * delivers (about 344/s at 44.1 kHz, 375/s at 48 kHz): if it falls to zero the microphone
+ * graph stopped, which is a different failure from the bank falling behind.
+ */
+export interface AudioStats {
+  contextState: string;
+  blocksPerSec: number;
+  stalled: boolean;
+  secondsSinceFrame: number;
+}
+
 export const DEFAULT_BANK: BankParams = {
   bins: 100,
   octaves: 9,

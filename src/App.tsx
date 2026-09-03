@@ -58,7 +58,7 @@ export function App() {
         setCollapsed={setCollapsed}
       />
 
-      <StatusBar render={stats.render} bank={stats.bank} running={running} />
+      <StatusBar render={stats.render} bank={stats.bank} audio={mic.audio} running={running} />
 
       {mic.state === "idle" || mic.state === "error" ? (
         <div className="overlay">

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { BankParams, BankStats } from "./types";
+import type { AudioStats, BankParams, BankStats } from "./types";
 
 export type MicState = "idle" | "starting" | "running" | "error";
 
@@ -8,6 +8,7 @@ export interface MicBank {
   /** human-readable configuration or error detail */
   info: string;
   sensors: number;
+  audio: AudioStats;
   start: () => Promise<void>;
   stop: () => void;
 }
@@ -15,6 +16,8 @@ export interface MicBank {
 const FRAME_RATE = 60;
 const MAG_STRIDE = 8;
 const BANDWIDTH_FACTOR = 1.0;
+/** no frames for this long while running counts as a stall */
+const STALL_MS = 2000;
 
 function initMessage(params: BankParams, sampleRate: number) {
   return {
@@ -36,12 +39,27 @@ function sameParams(a: BankParams | null, b: BankParams): boolean {
     a.q === b.q && a.precision === b.precision;
 }
 
+const IDLE_AUDIO: AudioStats = {
+  contextState: "closed",
+  blocksPerSec: 0,
+  stalled: false,
+  secondsSinceFrame: 0,
+};
+
 /**
  * Owns the microphone → AudioWorklet → Worker(WebAssembly bank) chain.
  *
- * `params` may change while running: the worker re-initialises the bank in place and
- * keeps the same audio graph, so there is no gap in capture and no second permission
- * prompt. `onFrame` and `onReset` are held in refs, so they may be inline closures.
+ * Two lifetime rules matter here, and getting either wrong stops capture after a few
+ * seconds on mobile while looking fine on desktop:
+ *
+ *  1. Every node must stay strongly referenced. A MediaStreamAudioSourceNode held only by
+ *     a local variable is collected once the function returns, and audio silently stops.
+ *  2. The graph must reach ctx.destination, because rendering is pulled from there. The
+ *     worklet's silent output therefore runs through a zero-gain node to the destination —
+ *     zero gain so the microphone is never fed back to the speaker.
+ *
+ * `params` may change while running: the worker re-initialises the bank in place and keeps
+ * the same audio graph, so there is no gap in capture and no second permission prompt.
  */
 export function useMicBank(
   params: BankParams,
@@ -51,12 +69,20 @@ export function useMicBank(
   const [state, setState] = useState<MicState>("idle");
   const [info, setInfo] = useState("");
   const [sensors, setSensors] = useState(0);
+  const [audio, setAudio] = useState<AudioStats>(IDLE_AUDIO);
 
   const ctxRef = useRef<AudioContext | null>(null);
   const workerRef = useRef<Worker | null>(null);
   const nodeRef = useRef<AudioWorkletNode | null>(null);
+  // held so the browser cannot collect them mid-session — see the note above
+  const srcRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const sinkRef = useRef<GainNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const sentRef = useRef<BankParams | null>(null);
+
+  const blocksRef = useRef(0);
+  const lastFrameAtRef = useRef(0);
+  const runningRef = useRef(false);
 
   const onFrameRef = useRef(onFrame);
   const onResetRef = useRef(onReset);
@@ -67,8 +93,13 @@ export function useMicBank(
   paramsRef.current = params;
 
   const stop = useCallback(() => {
+    runningRef.current = false;
     nodeRef.current?.disconnect();
     nodeRef.current = null;
+    srcRef.current?.disconnect();
+    srcRef.current = null;
+    sinkRef.current?.disconnect();
+    sinkRef.current = null;
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     void ctxRef.current?.close().catch(() => {});
@@ -79,9 +110,43 @@ export function useMicBank(
       workerRef.current = null;
     }
     sentRef.current = null;
+    blocksRef.current = 0;
+    lastFrameAtRef.current = 0;
     setSensors(0);
     setState("idle");
     setInfo("");
+    setAudio(IDLE_AUDIO);
+  }, []);
+
+  const buildGraph = useCallback(() => {
+    const ctx = ctxRef.current;
+    const stream = streamRef.current;
+    if (!ctx || !stream || nodeRef.current) return;
+
+    const src = ctx.createMediaStreamSource(stream);
+    const node = new AudioWorkletNode(ctx, "mic-forward", {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+    });
+    // zero gain: the graph reaches the destination so it is pulled, but nothing is audible
+    // and the microphone cannot feed back into the speaker
+    const sink = ctx.createGain();
+    sink.gain.value = 0;
+
+    node.port.onmessage = (e: MessageEvent) => {
+      const buf = e.data as Float32Array;
+      blocksRef.current++;
+      workerRef.current?.postMessage(buf, [buf.buffer]);
+    };
+
+    src.connect(node);
+    node.connect(sink);
+    sink.connect(ctx.destination);
+
+    srcRef.current = src;
+    nodeRef.current = node;
+    sinkRef.current = sink;
   }, []);
 
   const start = useCallback(async () => {
@@ -95,9 +160,23 @@ export function useMicBank(
       });
       streamRef.current = stream;
 
+      // the OS can end the track (another app takes the mic, a call arrives)
+      for (const track of stream.getTracks()) {
+        track.addEventListener("ended", () => {
+          if (!runningRef.current) return;
+          setState("error");
+          setInfo("the microphone track ended — another app may have taken the microphone");
+        });
+      }
+
       const ctx = new AudioContext();
       ctxRef.current = ctx;
-      if (ctx.state === "suspended") await ctx.resume();
+      ctx.onstatechange = () => {
+        if (!runningRef.current) return;
+        // iOS suspends (and reports "interrupted") on calls, route changes and backgrounding
+        if (ctx.state !== "running") void ctx.resume().catch(() => {});
+      };
+      if (ctx.state !== "running") await ctx.resume();
       await ctx.audioWorklet.addModule("mic-worklet.js");
 
       const worker = new Worker("mic-worker.js");
@@ -108,22 +187,16 @@ export function useMicBank(
         if (d.type === "ready") {
           setSensors(d.sensors);
           setState("running");
+          runningRef.current = true;
+          lastFrameAtRef.current = performance.now();
           setInfo(
             `${d.sensors.toLocaleString()} sensors · ${(d.sensors * 3).toLocaleString()} receptors · ` +
             `${(d.sampleRate / 1000).toFixed(1)} kHz · ${paramsRef.current.precision}`,
           );
           onResetRef.current();
-          if (!nodeRef.current && ctxRef.current && streamRef.current) {
-            const src = ctxRef.current.createMediaStreamSource(streamRef.current);
-            const node = new AudioWorkletNode(ctxRef.current, "mic-forward", { numberOfOutputs: 0 });
-            node.port.onmessage = (e: MessageEvent) => {
-              const buf = e.data as Float32Array;
-              workerRef.current?.postMessage(buf, [buf.buffer]);
-            };
-            src.connect(node);
-            nodeRef.current = node;
-          }
+          buildGraph();
         } else if (d.type === "frame") {
+          lastFrameAtRef.current = performance.now();
           onFrameRef.current(d.frame as ArrayBuffer, { procMs: d.processMs, blockMs: d.blockMs });
         } else if (d.type === "error") {
           setState("error");
@@ -142,7 +215,7 @@ export function useMicBank(
       setState("error");
       setInfo((e as Error).message || String(e));
     }
-  }, [stop]);
+  }, [stop, buildGraph]);
 
   // A parameter change while running re-initialises the bank in place.
   useEffect(() => {
@@ -156,7 +229,47 @@ export function useMicBank(
     worker.postMessage(initMessage(params, ctx.sampleRate));
   }, [params]);
 
+  // Once a second: report the audio-side counters and notice a stall. Counting the blocks
+  // the worklet delivers separates "capture stopped" from "the bank stopped keeping up".
+  useEffect(() => {
+    if (state !== "running") return;
+    let lastBlocks = blocksRef.current;
+    let lastAt = performance.now();
+
+    const timer = window.setInterval(() => {
+      const now = performance.now();
+      const ctx = ctxRef.current;
+      const blocksPerSec = ((blocksRef.current - lastBlocks) * 1000) / (now - lastAt);
+      lastBlocks = blocksRef.current;
+      lastAt = now;
+
+      const since = lastFrameAtRef.current ? now - lastFrameAtRef.current : 0;
+      const stalled = since > STALL_MS;
+      if (stalled && ctx && ctx.state !== "running") void ctx.resume().catch(() => {});
+
+      setAudio({
+        contextState: ctx?.state ?? "closed",
+        blocksPerSec,
+        stalled,
+        secondsSinceFrame: since / 1000,
+      });
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [state]);
+
+  // Coming back to the tab on mobile usually finds the context suspended.
+  useEffect(() => {
+    const onVisible = () => {
+      if (!runningRef.current || document.visibilityState !== "visible") return;
+      const ctx = ctxRef.current;
+      if (ctx && ctx.state !== "running") void ctx.resume().catch(() => {});
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
+
   useEffect(() => stop, [stop]);
 
-  return { state, info, sensors, start, stop };
+  return { state, info, sensors, audio, start, stop };
 }

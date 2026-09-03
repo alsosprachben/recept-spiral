@@ -1,8 +1,9 @@
-import type { BankStats, RenderStats } from "../lib/types";
+import type { AudioStats, BankStats, RenderStats } from "../lib/types";
 
 interface Props {
   render: RenderStats | null;
   bank: BankStats | null;
+  audio: AudioStats | null;
   running: boolean;
 }
 
@@ -10,8 +11,24 @@ function Sep() {
   return <span className="sep">│</span>;
 }
 
-export function StatusBar({ render, bank, running }: Props) {
+export function StatusBar({ render, bank, audio, running }: Props) {
   if (!render) return <div className="status">starting…</div>;
+
+  if (running && audio?.stalled) {
+    return (
+      <div className="status">
+        <span className="err">
+          stalled — no frames for {audio.secondsSinceFrame.toFixed(0)} s
+        </span>
+        <Sep />
+        audio context <b>{audio.contextState}</b>, {audio.blocksPerSec.toFixed(0)} blocks/s
+        <Sep />
+        {audio.blocksPerSec > 0
+          ? "capture is alive, so the bank stopped producing"
+          : "capture stopped delivering audio — restart the microphone"}
+      </div>
+    );
+  }
 
   const { meta } = render;
   const budget = bank && bank.blockMs > 0 ? (100 * bank.procMs) / bank.blockMs : null;
@@ -35,6 +52,15 @@ export function StatusBar({ render, bank, running }: Props) {
           {running ? "waiting for the first frame…" : "microphone stopped"}
         </>
       )}
+      {running && audio ? (
+        <>
+          <Sep />
+          <span className={audio.contextState === "running" ? "" : "warn"}>
+            {audio.contextState}
+          </span>{" "}
+          {audio.blocksPerSec.toFixed(0)} blocks/s
+        </>
+      ) : null}
       {bank && bank.blockMs > 0 ? (
         <>
           <Sep />
