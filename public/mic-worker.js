@@ -29,6 +29,12 @@ let accumMs = 0; // time spent since the last produced frame
 async function load(file) {
   const resp = await fetch(file);
   if (!resp.ok) throw new Error(`fetch ${file}: HTTP ${resp.status}`);
+  // A static host that answers unknown paths with the SPA shell returns HTML with a 200,
+  // and WebAssembly.instantiate would fail with an opaque "magic word" error. Name it.
+  const type = resp.headers.get("content-type") || "";
+  if (!/wasm|octet-stream/i.test(type)) {
+    throw new Error(`${file} was served as "${type}" — expected application/wasm; is it deployed?`);
+  }
   const bytes = await resp.arrayBuffer();
   const imports = {
     env: {
@@ -88,9 +94,9 @@ function handleAudio(samples) {
 }
 
 async function handleInit(d) {
-  // the version query matches the one the page uses, so a deploy never serves a stale bank
-  const file = (d.precision === "f64" ? "bank.wasm" : "bank_f32.wasm") +
-    (d.version ? `?v=${d.version}` : "");
+  // The page resolves the versioned filename and passes it in, so the naming scheme lives
+  // in one place (src/lib/assets.ts); the plain names are the standalone fallback.
+  const file = d.wasmFile || (d.precision === "f64" ? "bank.wasm" : "bank_f32.wasm");
   if (!wasm || wasmFile !== file) await load(file);
   sampleRate = d.sampleRate;
   const sensors = wasm.exports.bank_wasm_init(

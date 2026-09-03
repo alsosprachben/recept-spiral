@@ -10,12 +10,13 @@
 import { $ } from "bun";
 import { cp, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
+import { VERSIONED_ASSETS, versionedAsset } from "../src/lib/assets";
 
 /**
  * Bun content-hashes the bundle it emits, but the files copied verbatim from public/ keep
  * stable names — so a browser that cached mic-worklet.js or bank.wasm would keep the old
- * copy across a deploy and silently miss a fix. Hash their contents and hand the result to
- * the app, which appends it as a query string when it loads them.
+ * copy across a deploy and silently miss a fix. Hash their contents and put the result in
+ * their filenames (see src/lib/assets.ts for why not a query string).
  */
 async function assetVersion(): Promise<string> {
   const names = (await readdir("public")).sort();
@@ -64,8 +65,13 @@ async function main() {
     --define ${`__BUILD_ID__="${version}"`}`;
 
   // Verbatim assets: the worker and worklet are loaded by URL, not imported, and the .wasm
-  // files are fetched at runtime — none of them are part of the module graph.
-  await cp("public", OUT, { recursive: true });
+  // files are fetched at runtime — none of them are part of the module graph. The four the
+  // app loads at runtime get the version in their filename.
+  const versioned = new Set<string>(VERSIONED_ASSETS);
+  for (const name of await readdir("public")) {
+    const target = versioned.has(name) ? versionedAsset(name, version) : name;
+    await cp(join("public", name), join(OUT, target));
+  }
 
   const index = Bun.file(join(OUT, "index.html"));
   if (!(await index.exists())) throw new Error(`${OUT}/index.html missing after build`);
@@ -88,10 +94,12 @@ async function main() {
     throw new Error(`${(total / 1048576).toFixed(1)} MiB total, over the 50 MiB cap`);
   }
 
-  // Required at runtime; a rename in public/ would otherwise fail only in the browser.
-  for (const required of ["bank.wasm", "bank_f32.wasm", "mic-worker.js", "mic-worklet.js"]) {
-    if (!(await Bun.file(join(OUT, required)).exists())) {
-      throw new Error(`${required} missing from ${OUT}/ (expected in public/)`);
+  // Required at runtime under exactly the names the app will request; a mismatch here would
+  // otherwise surface only in the browser, as the server returning index.html instead.
+  for (const asset of VERSIONED_ASSETS) {
+    const name = versionedAsset(asset, version);
+    if (!(await Bun.file(join(OUT, name)).exists())) {
+      throw new Error(`${name} missing from ${OUT}/ (expected ${asset} in public/)`);
     }
   }
 

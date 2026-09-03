@@ -3,31 +3,44 @@
  *
  * getUserMedia needs a secure context, and localhost counts as one — so the microphone
  * works here without TLS.
+ *
+ * The verbatim assets are copied under the same versioned filenames the production build
+ * uses (with the version "dev"), so the paths the app requests are identical in both.
  */
 import { $ } from "bun";
-import { cp, mkdir, rm } from "node:fs/promises";
+import { cp, mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { VERSIONED_ASSETS, versionedAsset } from "../src/lib/assets";
 
 const OUT = "dist";
 const PORT = Number(process.env.PORT ?? 3000);
+const VERSION = "dev";
+const DEFINE = `__BUILD_ID__="${VERSION}"`;
+
+async function copyPublic() {
+  const versioned = new Set<string>(VERSIONED_ASSETS);
+  for (const name of await readdir("public")) {
+    const target = versioned.has(name) ? versionedAsset(name, VERSION) : name;
+    await cp(join("public", name), join(OUT, target));
+  }
+}
 
 await rm(OUT, { recursive: true, force: true });
 await mkdir(OUT, { recursive: true });
-const DEFINE = `__BUILD_ID__="dev"`;
 await $`bun build src/index.html --outdir ${OUT} --define ${DEFINE}`;
-await cp("public", OUT, { recursive: true });
+await copyPublic();
 
-// keep the bundle fresh; public/ is copied once above and watched below
-const watcher = Bun.spawn(["bun", "build", "src/index.html", "--outdir", OUT, "--define", DEFINE, "--watch"], {
-  stdout: "inherit",
-  stderr: "inherit",
-});
+// keep the bundle fresh; public/ is copied above and re-copied on change below
+const watcher = Bun.spawn(
+  ["bun", "build", "src/index.html", "--outdir", OUT, "--define", DEFINE, "--watch"],
+  { stdout: "inherit", stderr: "inherit" },
+);
 
 const publicWatch = new AbortController();
 (async () => {
   const { watch } = await import("node:fs");
   watch("public", { signal: publicWatch.signal }, () => {
-    void cp("public", OUT, { recursive: true }).catch(() => {});
+    void copyPublic().catch(() => {});
   });
 })();
 
@@ -41,7 +54,11 @@ const server = Bun.serve({
     if (await file.exists()) {
       return new Response(file, { headers: { "cache-control": "no-store" } });
     }
-    // single-page app: unknown paths fall back to the shell
+    // Mirror the platform: unknown paths fall back to the shell. That is what turns a
+    // missing asset into "expected expression, got '<'", so surface it here too.
+    if (/\.(js|wasm|css|map)$/.test(path)) {
+      console.warn(`404 ${path} — falling back to index.html, as the platform would`);
+    }
     const index = Bun.file(join(OUT, "index.html"));
     if (await index.exists()) {
       return new Response(index, { headers: { "cache-control": "no-store" } });

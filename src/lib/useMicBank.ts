@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { versionedAsset } from "./assets";
 import type { AudioStats, BankParams, BankStats } from "./types";
 
 export type MicState = "idle" | "starting" | "running" | "error";
@@ -19,13 +20,17 @@ const BANDWIDTH_FACTOR = 1.0;
 /** no frames for this long while running counts as a stall */
 const STALL_MS = 2000;
 
-/** cache buster for the assets the bundler does not content-hash */
-const V = `?v=${__BUILD_ID__}`;
+const WORKLET_URL = versionedAsset("mic-worklet.js", __BUILD_ID__);
+const WORKER_URL = versionedAsset("mic-worker.js", __BUILD_ID__);
 
 function initMessage(params: BankParams, sampleRate: number) {
   return {
     type: "init" as const,
-    version: __BUILD_ID__,
+    // resolved here so the worker never has to know the naming scheme
+    wasmFile: versionedAsset(
+      params.precision === "f64" ? "bank.wasm" : "bank_f32.wasm",
+      __BUILD_ID__,
+    ),
     sampleRate,
     bins: params.bins,
     octaves: params.octaves,
@@ -181,9 +186,18 @@ export function useMicBank(
         if (ctx.state !== "running") void ctx.resume().catch(() => {});
       };
       if (ctx.state !== "running") await ctx.resume();
-      await ctx.audioWorklet.addModule(`mic-worklet.js${V}`);
+      try {
+        await ctx.audioWorklet.addModule(WORKLET_URL);
+      } catch (e) {
+        // A static host that answers unknown paths with the SPA shell turns a missing
+        // asset into a syntax error from parsing HTML as JavaScript. Say so plainly.
+        throw new Error(
+          `could not load ${WORKLET_URL} — the server may have returned index.html ` +
+          `instead of JavaScript (${(e as Error).message})`,
+        );
+      }
 
-      const worker = new Worker(`mic-worker.js${V}`);
+      const worker = new Worker(WORKER_URL);
       workerRef.current = worker;
 
       worker.onmessage = (ev: MessageEvent) => {
