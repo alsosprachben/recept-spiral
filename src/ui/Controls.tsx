@@ -1,5 +1,5 @@
 import type { BankParams, DitherParams, ViewParams } from "../lib/types";
-import { Brightness, Colour, slowestWindowSeconds } from "../lib/types";
+import { Brightness, Colour, Position, slowestWindowSeconds } from "../lib/types";
 import type { MicState } from "../lib/useMicBank";
 
 interface Props {
@@ -246,6 +246,34 @@ export function Controls(props: Props) {
                 <option value={Brightness.TonalAlt}>receptor model — −energy − entropy</option>
               </select>
             </label>
+            <label className="row stacked">
+              <span>position</span>
+              <select
+                value={view.position}
+                onChange={(e) => setView({ ...view, position: parseInt(e.target.value, 10) as Position })}
+              >
+                <option value={Position.Centre}>sensor centre — what the receptors sense</option>
+                <option value={Position.Detected}>detected frequency — from receptor phase</option>
+              </select>
+            </label>
+            {view.position === Position.Detected ? (
+              <>
+                <Slider
+                  label="confidence"
+                  value={view.confidence}
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  digits={2}
+                  onChange={(v) => setView({ ...view, confidence: v })}
+                />
+                <div className="note">
+                  each receptor is drawn where its phase says the energy is, collapsing a tone
+                  into one line; below the confidence it stays at its centre (noise, or two
+                  tones closer than a receptor can separate)
+                </div>
+              </>
+            ) : null}
             <label className="row stacked">
               <span>colour</span>
               <select

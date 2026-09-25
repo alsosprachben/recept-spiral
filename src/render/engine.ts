@@ -1,4 +1,5 @@
-import { packPixels, parseHeader } from "../lib/frame";
+import { cellOffset, gridWidth, packBuffers, packPixels, parseHeader } from "../lib/frame";
+import type { PackBuffers } from "../lib/frame";
 import type { FrameMeta, RenderStats, ViewParams } from "../lib/types";
 import { Colour } from "../lib/types";
 import { FRAGMENT_SHADER, VERTEX_SHADER } from "./shaders";
@@ -38,8 +39,12 @@ export class SpiralEngine {
   private uniforms: Record<string, WebGLUniformLocation | null> = {};
 
   private meta: FrameMeta | null = null;
-  private held: Float32Array | null = null;
+  private buffers: PackBuffers | null = null;
   private pixels: Uint8Array | null = null;
+  /** texture cells per octave row: bins, or finer in detected-frequency mode */
+  private width = 0;
+  /** where cell j sits within its row, in cells (see cellOffset) */
+  private offset = 0;
   private dirty = false;
 
   private raf = 0;
@@ -111,7 +116,7 @@ export class SpiralEngine {
     gl.enableVertexAttribArray(loc);
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
 
-    for (const n of ["tex", "aspect", "r0", "k", "octaves", "band", "mode"]) {
+    for (const n of ["tex", "aspect", "r0", "k", "octaves", "band", "mode", "shift"]) {
       this.uniforms[n] = gl.getUniformLocation(prog, n);
     }
 
@@ -137,25 +142,29 @@ export class SpiralEngine {
       const m = parseHeader(ab);
       if (!m) return;
 
+      const width = gridWidth(m, this.view);
       if (!this.meta || this.meta.bins !== m.bins || this.meta.octaves !== m.octaves ||
-          this.meta.sensors !== m.sensors) {
-        this.held = new Float32Array(m.sensors);
-        this.pixels = new Uint8Array(m.bins * m.octaves * 4);
+          this.meta.sensors !== m.sensors || this.width !== width) {
+        const cells = width * m.octaves;
+        this.buffers = packBuffers(cells);
+        this.pixels = new Uint8Array(cells * 4);
+        this.width = width;
         if (this.gl && this.tex) {
           this.gl.bindTexture(this.gl.TEXTURE_2D, this.tex);
-          this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, m.bins, m.octaves, 0,
+          this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, width, m.octaves, 0,
             this.gl.RGBA, this.gl.UNSIGNED_BYTE, null);
         }
         this.meta = m;
         this.drawOverlay(m);
       }
       this.meta = m;
+      this.offset = cellOffset(m, this.view);
 
-      packPixels(ab, m, this.view, this.held!, this.pixels!);
+      packPixels(ab, m, this.view, this.buffers!, this.pixels!);
 
       if (this.gl && this.tex) {
         this.gl.bindTexture(this.gl.TEXTURE_2D, this.tex);
-        this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, m.bins, m.octaves,
+        this.gl.texSubImage2D(this.gl.TEXTURE_2D, 0, 0, 0, width, m.octaves,
           this.gl.RGBA, this.gl.UNSIGNED_BYTE, this.pixels!);
       }
       this.frames++;
@@ -183,8 +192,9 @@ export class SpiralEngine {
   /** Drop the frame state so a reconfigured bank starts from a clean display. */
   reset(): void {
     this.meta = null;
-    this.held = null;
+    this.buffers = null;
     this.pixels = null;
+    this.width = 0;
     this.dirty = false;
     const c = this.overlay.getContext("2d");
     c?.clearRect(0, 0, this.overlay.width, this.overlay.height);
@@ -270,6 +280,8 @@ export class SpiralEngine {
     gl.uniform1f(this.uniforms.octaves!, this.meta!.octaves);
     gl.uniform1f(this.uniforms.band!, this.view.band);
     gl.uniform1i(this.uniforms.mode!, this.view.colour);
+    // sample so that the pitch class a reads the cell representing a (see cellOffset)
+    gl.uniform1f(this.uniforms.shift!, (0.5 - this.offset) / this.width);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     // include rasterisation in the timing: software GL shows up here, not later
     gl.finish();
@@ -287,17 +299,19 @@ export class SpiralEngine {
     c.fillStyle = "#000";
     c.fillRect(0, 0, g.w, g.h);
     c.lineWidth = Math.max(1, g.disc * g.k * 0.5 * this.view.band);
-    const step = (Math.PI * 2) / meta.bins;
+    const W = this.width;
+    const step = (Math.PI * 2) / W;
 
-    for (let i = 0; i < meta.sensors; i++) {
+    for (let i = 0; i < W * meta.octaves; i++) {
       const o = i * 4;
       const amp = pixels[o] / 255;
       if (amp < 0.02 && mode !== Colour.FreeEnergy) continue;
 
-      const octave = Math.floor(i / meta.bins);
-      const pos = i % meta.bins;
-      const s0 = octave + pos / meta.bins;
-      const s1 = octave + (pos + 1) / meta.bins;
+      // cell i spans half a cell either side of where it sits (see cellOffset)
+      const octave = Math.floor(i / W);
+      const pos = (i % W) + this.offset - 0.5;
+      const s0 = octave + pos / W;
+      const s1 = octave + (pos + 1) / W;
       const rad0 = g.disc * (g.r0 + g.k * s0);
       const rad1 = g.disc * (g.r0 + g.k * s1);
       // 0 at 12 o'clock, increasing clockwise

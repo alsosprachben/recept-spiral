@@ -274,11 +274,49 @@ static void bank_array_cache_alphas(struct bank_array *a, double B) {
 	for (i = 0; i < a->count; i++) {
 		struct bank_sensor *sensor = &a->sensors[i];
 		sensor->alpha_response = block_alpha(sensor->response_period, B);
+		{
+			double window = 0;
+			for (s = 0; s < a->scales; s++) {
+				double w = sensor->period * a->bank.period_factor[s * a->bank.capacity + i];
+				if (w > window) window = w;
+			}
+			sensor->alpha_confidence = block_alpha(window, B);
+		}
 		for (s = 0; s < a->scales; s++) {
 			a->receptors[i * a->scales + s].alpha_avg = block_alpha(sensor->period * sensor->phase_factor, B);
 		}
 	}
 	a->cached_block = B;
+}
+
+/*
+ * Frequency reassignment: where the sensor's receptors say the energy actually is. The position
+ * comes from scale 0 (the narrowest receptor, which also feeds the magnitude); the confidence is
+ * scale 0's coherence times the agreement of the three scales' frequencies, which a tone keeps and
+ * noise or an unresolved pair of tones does not. Agreement is judged against half a receptor
+ * bandwidth (600 / octave_bandwidth cents), and the confidence is smoothed over the slowest
+ * receptor window so beating does not make it flicker.
+ */
+static void sensor_reassign(struct bank_array *a, int i) {
+	struct bank_sensor *sensor = &a->sensors[i];
+	double fc = 1.0 / sensor->period;
+	double c0 = 0, spread = 0, agree, raw;
+	int s;
+
+	for (s = 0; s < a->scales; s++) {
+		double f = fc + bank_if_offset(&a->bank, i, s);
+		double c = f > 0 ? 1200.0 * log2(f / fc) : 0.0;
+		if (s == 0) {
+			c0 = c;
+		} else if (fabs(c - c0) > spread) {
+			spread = fabs(c - c0);
+		}
+	}
+	agree = 1.0 - spread / (600.0 / a->octave_bandwidth);
+	agree = agree < 0 ? 0 : agree > 1 ? 1 : agree;
+	raw = bank_if_coherence(&a->bank, i, 0) * agree;
+	sensor->if_cents = c0;
+	sensor->if_confidence += (raw - sensor->if_confidence) * sensor->alpha_confidence;
 }
 
 void bank_array_analyze(struct bank_array *a) {
@@ -334,6 +372,7 @@ void bank_array_analyze(struct bank_array *a) {
 	#pragma omp parallel for schedule(static)
 	for (i = 0; i < a->count; i++) {
 		sensor_lifecycle(a, i, B);
+		sensor_reassign(a, i);
 	}
 
 	a->last_time = time;

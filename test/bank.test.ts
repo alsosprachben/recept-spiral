@@ -13,7 +13,7 @@ const OCTAVES = 9;
 const F_REF = 27.5;
 const Q = 96;
 const FRAME_RATE = 60;
-const CHANNELS = 5;
+const CHANNELS = 7;
 
 interface BankExports {
   memory: WebAssembly.Memory;
@@ -132,6 +132,23 @@ for (const file of ["bank_f32.wasm", "bank.wasm"]) {
       expect(peakFreq).toBeGreaterThan(430);
       expect(peakFreq).toBeLessThan(450);
 
+      ex.bank_wasm_free();
+    });
+
+    test("reports a tone's detected frequency within 1 cent, with confidence", async () => {
+      // 3.7 cents sharp of the 440 Hz sensor (sensor 4 * BINS, 12 cents per bin)
+      const cents = 3.7;
+      const ex = await instantiate(file);
+      const frames = runTone(ex, 440 * Math.pow(2, cents / 1200), 3);
+      const last = frames[frames.length - 1];
+      const h = parse(last);
+      const data = new Float32Array(last, h.headerSize, h.sensors * h.channels);
+      const binCents = 1200 / BINS;
+      for (let i = 4 * BINS - 3; i <= 4 * BINS + 3; i++) {
+        const detected = (i - 4 * BINS) * binCents + data[i * h.channels + 5];
+        expect(Math.abs(detected - cents)).toBeLessThan(1);
+        expect(data[i * h.channels + 6]).toBeGreaterThan(0.85);
+      }
       ex.bank_wasm_free();
     });
 

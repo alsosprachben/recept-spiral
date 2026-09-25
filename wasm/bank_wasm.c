@@ -22,7 +22,7 @@
 
 #include "bank.h"
 
-#define CHANNELS 5
+#define CHANNELS 7
 
 struct frame_header {
 	char     magic[4];
@@ -157,6 +157,8 @@ EXPORT int bank_wasm_process(int n, uint32_t stamp_ms) {
 				row[2] = (float) creal(s->period_lifecycle.cval);
 				row[3] = (float) cimag(s->period_lifecycle.cval);
 				row[4] = (float) s->period_lifecycle.phi;
+				row[5] = (float) s->if_cents;
+				row[6] = (float) s->if_confidence;
 			}
 			g_hdr.time = g_bank.bank.time;
 			g_hdr.stamp_ms = stamp_ms;

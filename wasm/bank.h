@@ -80,6 +80,29 @@ struct receptor_bank {
 	double    *dr_re, *dr_im;   /* per sensor: sweep phasor rotation per sub-block */
 	double    *dw;              /* per sensor: sweep angular rate, radians per sample */
 	bank_real *drot_re, *drot_im; /* per sensor: the phasor rotation for the current sub-block */
+
+	/*
+	 * Frequency discriminator (for frequency reassignment). At every r_stride point each receptor
+	 * forms q = v * conj(v_prev) * conj(c): the phase its value advanced over the stride, with
+	 * c = osc * conj(osc_prev) * conj(rot^stride) removing whatever the micro-glissando added to
+	 * the demodulator. For a tone at f, arg q = 2 pi stride (f_c - f), unambiguous while
+	 * |f - f_c| < 1 / (2 stride) cycles per sample. q is accumulated like acc_r (EMA with beta, or
+	 * summed), weighted by |v| |v_prev|; that weight is accumulated too, for the coherence.
+	 */
+	bank_real *pv_re, *pv_im;   /* per receptor: v at the previous stride point */
+	bank_real *pr;              /* per receptor: |v| at the previous stride point */
+	bank_real *acc_q_re, *acc_q_im; /* per receptor: accumulated q */
+	bank_real *acc_qr;          /* per receptor: accumulated |v| |v_prev| */
+	bank_real *posc_re, *posc_im; /* per sensor: phasor at the previous stride point */
+	bank_real *rs_re, *rs_im;   /* per sensor: rot^stride, the nominal phasor advance per stride */
+	/*
+	 * The discriminator's accumulation is scale-covariant: each sensor averages q over a fixed
+	 * fraction (q_window_frac) of its slowest receptor window, never shorter than the magnitude
+	 * smoothing window.
+	 */
+	double     q_window_frac;
+	double     smoothing_window; /* the magnitude smoothing window, samples (bank_set_smoothing) */
+	bank_real *beta_q;          /* per sensor: EMA factor per stride for acc_q / acc_qr */
 };
 
 int  bank_init(struct receptor_bank *b, int scales, int capacity, double start_time);
@@ -115,6 +138,24 @@ static inline double bank_mean_r(const struct receptor_bank *b, int sensor, int 
 		return (double) b->acc_r[k] / (double) b->acc_n;
 	}
 	return sqrt((double) b->v_re[k] * b->v_re[k] + (double) b->v_im[k] * b->v_im[k]);
+}
+
+/* Detected frequency minus the sensor's centre, in cycles per sample (the magnitude-weighted mean
+   over the accumulation window); 0 before any accumulation. */
+static inline double bank_if_offset(const struct receptor_bank *b, int sensor, int scale) {
+	int k = scale * b->capacity + sensor;
+	double re = b->acc_q_re[k], im = b->acc_q_im[k];
+	if (re == 0 && im == 0) {
+		return 0.0;
+	}
+	return -atan2(im, re) / (6.283185307179586 * b->r_stride);
+}
+
+/* How steady that frequency is: |mean q| / mean |q|, in [0, 1]: ~1 for a steady tone, low for noise. */
+static inline double bank_if_coherence(const struct receptor_bank *b, int sensor, int scale) {
+	int k = scale * b->capacity + sensor;
+	double w = b->acc_qr[k];
+	return w > 0 ? sqrt((double) b->acc_q_re[k] * b->acc_q_re[k] + (double) b->acc_q_im[k] * b->acc_q_im[k]) / w : 0.0;
 }
 
 /* ---- per-block analysis layer ------------------------------------------------ */
@@ -170,6 +211,11 @@ struct bank_sensor {
 	double phase_factor;
 	double response_period;
 	double alpha_response;             /* block alpha of response_period, cached per block size */
+
+	/* frequency reassignment (from the bank's discriminator) */
+	double if_cents;                   /* detected frequency minus the centre, cents (scale 0) */
+	double if_confidence;              /* coherence x agreement across scales, smoothed; 0..1 */
+	double alpha_confidence;           /* block alpha of the slowest receptor window */
 
 	/* period lifecycle (derived from the receptor magnitudes across scales) */
 	double d, dd, d_avg, dd_avg;

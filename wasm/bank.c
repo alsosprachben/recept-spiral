@@ -74,6 +74,18 @@ int bank_init(struct receptor_bank *b, int scales, int capacity, double start_ti
 	b->dr_re = bank_alloc(n, sizeof (double));
 	b->dr_im = bank_alloc(n, sizeof (double));
 	b->dw    = bank_alloc(n, sizeof (double));
+	b->pv_re    = bank_alloc(sn, sizeof (bank_real));
+	b->pv_im    = bank_alloc(sn, sizeof (bank_real));
+	b->pr       = bank_alloc(sn, sizeof (bank_real));
+	b->acc_q_re = bank_alloc(sn, sizeof (bank_real));
+	b->acc_q_im = bank_alloc(sn, sizeof (bank_real));
+	b->acc_qr   = bank_alloc(sn, sizeof (bank_real));
+	b->posc_re  = bank_alloc(n, sizeof (bank_real));
+	b->posc_im  = bank_alloc(n, sizeof (bank_real));
+	b->rs_re    = bank_alloc(n, sizeof (bank_real));
+	b->rs_im    = bank_alloc(n, sizeof (bank_real));
+	b->beta_q   = bank_alloc(n, sizeof (bank_real));
+	b->q_window_frac = 0.25;
 	b->acc_n = 0;
 	b->beta = 0;
 	b->r_stride = 1;
@@ -83,7 +95,11 @@ int bank_init(struct receptor_bank *b, int scales, int capacity, double start_ti
 	    b->period == NULL || b->phase == NULL || b->alpha == NULL || b->v_re == NULL ||
 	    b->v_im == NULL || b->acc_r == NULL || b->period_factor == NULL ||
 	    b->drot_re == NULL || b->drot_im == NULL || b->warp == NULL || b->warp_rate == NULL ||
-	    b->dz_re == NULL || b->dz_im == NULL || b->dr_re == NULL || b->dr_im == NULL || b->dw == NULL) {
+	    b->dz_re == NULL || b->dz_im == NULL || b->dr_re == NULL || b->dr_im == NULL || b->dw == NULL ||
+	    b->pv_re == NULL || b->pv_im == NULL || b->pr == NULL || b->acc_q_re == NULL ||
+	    b->acc_q_im == NULL || b->acc_qr == NULL || b->posc_re == NULL || b->posc_im == NULL ||
+	    b->rs_re == NULL || b->rs_im == NULL ||
+	    b->beta_q == NULL) {
 		bank_free(b);
 		return -1;
 	}
@@ -95,6 +111,8 @@ int bank_init(struct receptor_bank *b, int scales, int capacity, double start_ti
 		b->dz_re[i] = 1;
 		b->dr_re[i] = 1;
 		b->osc_re[i] = 1;
+		b->posc_re[i] = 1;
+		b->rs_re[i] = 1;
 	}
 	return 0;
 }
@@ -108,6 +126,10 @@ void bank_free(struct receptor_bank *b) {
 	free(b->drot_re); free(b->drot_im);
 	free(b->warp); free(b->warp_rate);
 	free(b->dz_re); free(b->dz_im); free(b->dr_re); free(b->dr_im); free(b->dw);
+	free(b->pv_re); free(b->pv_im); free(b->pr);
+	free(b->acc_q_re); free(b->acc_q_im); free(b->acc_qr);
+	free(b->posc_re); free(b->posc_im); free(b->rs_re); free(b->rs_im);
+	free(b->beta_q);
 	memset(b, 0, sizeof (*b));
 }
 
@@ -118,6 +140,22 @@ static void bank_seed_sensor(struct receptor_bank *b, int i) {
 	double rad = tau2rad(tau);
 	b->osc_re[i] = (bank_real) cos(rad);
 	b->osc_im[i] = (bank_real) sin(rad);
+}
+
+/* per-stride constants of sensor i's discriminator: rot^stride and beta_q */
+static void bank_stride_rotation(struct receptor_bank *b, int i) {
+	double rad = tau2rad((double) b->r_stride / b->period[i]);
+	double window = 0, wq;
+	int s;
+	b->rs_re[i] = (bank_real) cos(rad);
+	b->rs_im[i] = (bank_real) sin(rad);
+	for (s = 0; s < b->scales; s++) {
+		int k = s * b->capacity + i;
+		double w = b->period[i] * b->period_factor[k];
+		if (w > window) window = w;
+	}
+	wq = fmax(b->smoothing_window, b->q_window_frac * window);
+	b->beta_q[i] = wq > 0 ? (bank_real) (1.0 - pow(1.0 - 1.0 / wq, b->r_stride)) : 0;
 }
 
 /* sensor i's sweep rate: one cycle per dither_windows of its slowest (largest) receptor window */
@@ -162,11 +200,18 @@ int bank_add_sensor(struct receptor_bank *b, double period, double phase, const 
 	b->dz_re[i] = 1;
 	b->dz_im[i] = 0;
 	bank_dither_sensor(b, i);
+	bank_stride_rotation(b, i);
+	b->posc_re[i] = b->osc_re[i];
+	b->posc_im[i] = b->osc_im[i];
 	return i;
 }
 
 void bank_reset_accumulators(struct receptor_bank *b) {
-	memset(b->acc_r, 0, (size_t) b->scales * b->capacity * sizeof (bank_real));
+	size_t sn = (size_t) b->scales * b->capacity * sizeof (bank_real);
+	memset(b->acc_r, 0, sn);
+	memset(b->acc_q_re, 0, sn);
+	memset(b->acc_q_im, 0, sn);
+	memset(b->acc_qr, 0, sn);
 	b->acc_n = 0;
 }
 
@@ -176,8 +221,12 @@ void bank_set_smoothing(struct receptor_bank *b, double window, int stride) {
 	}
 	/* an EMA stepped every `stride` samples with the same time constant as a per-sample window */
 	b->beta = window > 0 ? (bank_real) (1.0 - pow(1.0 - 1.0 / window, stride)) : 0;
+	b->smoothing_window = window;
 	b->r_stride = stride;
 	b->r_phase = 0;
+	for (int i = 0; i < b->count; i++) {
+		bank_stride_rotation(b, i);
+	}
 	bank_reset_accumulators(b);
 }
 
@@ -202,12 +251,24 @@ static void bank_process_chunk(struct receptor_bank *b, int c0, int c1, const fl
 	bank_real * restrict v_re = b->v_re;
 	bank_real * restrict v_im = b->v_im;
 	bank_real * restrict acc_r = b->acc_r;
+	bank_real * restrict pv_re = b->pv_re;
+	bank_real * restrict pv_im = b->pv_im;
+	bank_real * restrict pr = b->pr;
+	bank_real * restrict aq_re = b->acc_q_re;
+	bank_real * restrict aq_im = b->acc_q_im;
+	bank_real * restrict aqr = b->acc_qr;
+	bank_real * restrict posc_re = b->posc_re;
+	bank_real * restrict posc_im = b->posc_im;
+	const bank_real * restrict rs_re = b->rs_re;
+	const bank_real * restrict rs_im = b->rs_im;
+	const bank_real * restrict beta_q = b->beta_q;
 	const bank_real beta = b->beta;
 	const int stride = b->r_stride;
 	int phase = b->r_phase;
 	const int cap = b->capacity;
 	const int S = b->scales;
 	bank_real xr[BANK_CHUNK], xi[BANK_CHUNK];
+	bank_real cr[BANK_CHUNK], ci[BANK_CHUNK];
 	int k, s, i;
 
 	bank_flush_denormals();
@@ -237,22 +298,49 @@ static void bank_process_chunk(struct receptor_bank *b, int c0, int c1, const fl
 			}
 		}
 
-		/* every r_stride samples: accumulate |v| (sum, or EMA when beta > 0) */
+		/* every r_stride samples: accumulate |v| and the discriminator (sum, or EMA when beta > 0) */
 		if (phase == 0) {
+			/* c: the phase the micro-glissando added to each demodulator since the last stride
+			   point, osc * conj(osc_prev) * conj(rot^stride) (1 without a sweep, up to rounding) */
+			#pragma omp simd
+			for (i = c0; i < c1; i++) {
+				bank_real a_re = osc_re[i] * posc_re[i] + osc_im[i] * posc_im[i];
+				bank_real a_im = osc_im[i] * posc_re[i] - osc_re[i] * posc_im[i];
+				cr[i - c0] = a_re * rs_re[i] + a_im * rs_im[i];
+				ci[i - c0] = a_im * rs_re[i] - a_re * rs_im[i];
+				posc_re[i] = osc_re[i];
+				posc_im[i] = osc_im[i];
+			}
 			for (s = 0; s < S; s++) {
-				const bank_real * restrict vr = v_re + (size_t) s * cap;
-				const bank_real * restrict vi = v_im + (size_t) s * cap;
-				bank_real * restrict acc = acc_r + (size_t) s * cap;
-				if (beta > 0) {
-					#pragma omp simd
-					for (i = c0; i < c1; i++) {
-						acc[i] += beta * (sqrt(vr[i] * vr[i] + vi[i] * vi[i]) - acc[i]);
-					}
-				} else {
-					#pragma omp simd
-					for (i = c0; i < c1; i++) {
-						acc[i] += sqrt(vr[i] * vr[i] + vi[i] * vi[i]);
-					}
+				const size_t o = (size_t) s * cap;
+				const bank_real * restrict vr = v_re + o;
+				const bank_real * restrict vi = v_im + o;
+				bank_real * restrict acc = acc_r + o;
+				bank_real * restrict pvr = pv_re + o;
+				bank_real * restrict pvi = pv_im + o;
+				bank_real * restrict prr = pr + o;
+				bank_real * restrict qre = aq_re + o;
+				bank_real * restrict qim = aq_im + o;
+				bank_real * restrict qr = aqr + o;
+				/* EMA when beta > 0, else plain sums: acc += g * (value - h * acc) */
+				const bank_real g = beta > 0 ? beta : 1;
+				const bank_real h = beta > 0 ? 1 : 0;
+				#pragma omp simd
+				for (i = c0; i < c1; i++) {
+					bank_real m = sqrt(vr[i] * vr[i] + vi[i] * vi[i]);
+					/* q = v * conj(v_prev) * conj(c) */
+					bank_real p_re = vr[i] * pvr[i] + vi[i] * pvi[i];
+					bank_real p_im = vi[i] * pvr[i] - vr[i] * pvi[i];
+					bank_real q_re = p_re * cr[i - c0] + p_im * ci[i - c0];
+					bank_real q_im = p_im * cr[i - c0] - p_re * ci[i - c0];
+					bank_real gq = beta > 0 ? beta_q[i] : 1;
+					acc[i] += g * (m - h * acc[i]);
+					qre[i] += gq * (q_re - h * qre[i]);
+					qim[i] += gq * (q_im - h * qim[i]);
+					qr[i]  += gq * (m * prr[i] - h * qr[i]);
+					pvr[i] = vr[i];
+					pvi[i] = vi[i];
+					prr[i] = m;
 				}
 			}
 			phase = stride;

@@ -72,6 +72,21 @@ invisible without the sweep), without adding any tonal response to noise. Period
 about 6 windows average out; depths over about half a bin smear neighbours together. Expect
 the arms to pulse slowly — that is the sweep being seen.
 
+**position** chooses where a sensor's brightness is drawn. *Sensor centre* is the place
+code: each receptor lights its own fixed spot, so one tone lights a small cluster of
+neighbours. *Detected frequency* is the temporal code — frequency reassignment: each
+receptor's phase advance says where the energy actually is, and its brightness is drawn
+there, on a grid four times finer than the bins, so the cluster collapses into one line at
+the tone's true pitch. In `recept/reassign_test.c`, sensors up to 4 bins from a tone report it
+within 1 ¢ at every pitch from 55 Hz to 7 kHz (0.18 ¢ on average; 0.37 ¢ with the
+micro-glissando on). A sensor moves only if its **confidence** — phase coherence times the
+agreement of its three scales — clears the threshold (default 0.85): tones score ≥ 0.87,
+white noise almost never reaches 0.8, and two tones closer than one receptor can separate
+score 0.6–0.82 and stay put. Two honest limits: reassignment sharpens a line but cannot split
+two tones inside one receptor's bandwidth, and at `q = 96` the receptors are too slow
+(~200 ms at 440 Hz) to follow vibrato faster than about 1–2 Hz, so a fast vibrato is drawn
+smoothed and late.
+
 The other controls are display-only: **floor**/**range** set the dB window mapped to black
 and to full brightness, **decay** adds visual persistence (0 is honest — the receptors
 already integrate), **band** is the arm width, and **resolution** is the render backing
@@ -113,8 +128,9 @@ per-block deadline — overrunning there is an audio glitch, while falling behin
 worker only costs display frames.
 
 **RCP1** is the frame format: a 48-byte header (magic, sample rate, bins, octaves, sensors,
-channels, reference frequency, timestamp) followed by five float32 per sensor — amplitude,
-free energy, entropy, energy, lifecycle phase. It is byte-identical to what the native
+channels, reference frequency, timestamp) followed by `channels` float32 per sensor (7) — amplitude,
+free energy, entropy, energy, lifecycle phase, detected frequency (cents from the sensor's
+centre) and its confidence. It is byte-identical to what the native
 `bank_stream` produces in the [`recept`](https://github.com/alsosprachben/recept) repo, so
 the same viewer can read either source.
 

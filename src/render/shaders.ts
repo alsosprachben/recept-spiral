@@ -26,6 +26,7 @@ uniform float k;         // radial distance per octave
 uniform float octaves;
 uniform float band;      // arm width as a fraction of k
 uniform int   mode;      // 0 amplitude, 1 phase hue, 2 free energy
+uniform float shift;     // texture x offset so pitch class a reads the cell that sits at a
 
 const float TAU = 6.283185307179586;
 
@@ -50,7 +51,7 @@ void main() {
   if (dist > 1.0) { color = vec4(0.0, 0.0, 0.0, 1.0); return; }
   float edge = 1.0 - smoothstep(0.7, 1.0, dist);
 
-  vec4 t = texture(tex, vec2(a, (n + 0.5) / octaves));
+  vec4 t = texture(tex, vec2(a + shift, (n + 0.5) / octaves));
   float amp = t.r;
 
   vec3 rgb;

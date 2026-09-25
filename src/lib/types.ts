@@ -55,6 +55,19 @@ export const enum Brightness {
   TonalAlt = 2,
 }
 
+/**
+ * Where a sensor's brightness is drawn: at its fixed centre frequency (the place code — what
+ * the receptors sense), or at the frequency its receptors' phase says the energy is at
+ * (frequency reassignment, the temporal code — what they infer).
+ */
+export const enum Position {
+  Centre = 0,
+  Detected = 1,
+}
+
+/** Detected mode draws on a grid this many times finer than the bins. */
+export const REASSIGN_FACTOR = 4;
+
 /** Colour mapping. */
 export const enum Colour {
   Amplitude = 0,
@@ -74,6 +87,9 @@ export interface ViewParams {
   band: number;
   brightness: Brightness;
   colour: Colour;
+  position: Position;
+  /** detected mode: sensors below this confidence stay at their centre */
+  confidence: number;
   /** canvas backing-store size for the short side, px */
   resolution: number;
   labels: boolean;
@@ -142,6 +158,10 @@ export const DEFAULT_VIEW: ViewParams = {
   band: 0.9,
   brightness: Brightness.Tonal,
   colour: Colour.Phase,
+  position: Position.Centre,
+  // recept/reassign_test.c: tones score >= 0.87 (0.94 without the micro-glissando), white noise
+  // reaches 0.8 for ~1% of sensors, and two tones inside one receptor score 0.6-0.82
+  confidence: 0.85,
   resolution: 800,
   labels: true,
 };
