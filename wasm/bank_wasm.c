@@ -11,7 +11,8 @@
  *   bank_wasm_process(n)           -> 1 if a frame was produced (every block of sr/frame_rate samples)
  *   bank_wasm_frame()              -> unsigned char* (RCP1 frame)
  *   bank_wasm_frame_size()         -> bytes
- *   bank_wasm_set_dither(cents, hz) micro-glissando of every sensor (0 cents disables); kept across init
+ *   bank_wasm_set_dither(cents, windows) micro-glissando: every sensor's centre sweeps +-cents, one cycle
+ *                                  per `windows` of its own slowest receptor window (0 cents disables); kept across init
  *   bank_wasm_free()
  */
 #include <stdlib.h>
@@ -48,7 +49,7 @@ static unsigned char *g_frame = NULL;
 static size_t g_frame_size = 0;
 static struct frame_header g_hdr;
 static double g_dither_cents = 0.0;
-static double g_dither_hz = 0.0;
+static double g_dither_windows = 0.0;
 
 #define EXPORT __attribute__((used, visibility("default")))
 
@@ -64,13 +65,13 @@ EXPORT void bank_wasm_free(void) {
 
 static void apply_dither(void) {
 	if (g_ready) {
-		bank_set_dither(&g_bank.bank, pow(2, g_dither_cents / 1200.0) - 1.0, g_dither_hz / g_hdr.sample_rate);
+		bank_set_dither(&g_bank.bank, pow(2, g_dither_cents / 1200.0) - 1.0, g_dither_windows);
 	}
 }
 
-EXPORT void bank_wasm_set_dither(double cents, double hz) {
+EXPORT void bank_wasm_set_dither(double cents, double windows) {
 	g_dither_cents = cents;
-	g_dither_hz = hz;
+	g_dither_windows = windows;
 	apply_dither();
 }
 

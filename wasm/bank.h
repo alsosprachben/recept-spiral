@@ -61,18 +61,25 @@ struct receptor_bank {
 	long   since_reseed;
 
 	/*
-	 * Micro-glissando: every demodulation frequency is scaled by 1 + dither_depth * sin(dither_phase),
-	 * with dither_phase advancing dither_rate cycles per sample. Because the scaling is the same
-	 * relative amount for every sensor, it is a warp of the demodulation clock: the phasors read
-	 * time + warp instead of time, where warp is the integral of the frequency deviation. The
-	 * receptors' own phases therefore carry the dither; magnitudes (and so the lifecycle) do not
-	 * need correcting. dither_depth == 0 disables it and leaves the per-sample loop unchanged.
+	 * Micro-glissando, scale-covariant: sensor i's demodulation frequency is scaled by
+	 * 1 + dither_depth * sin(phi_i), where phi_i makes one cycle every dither_windows of that
+	 * sensor's own slowest receptor window. Every sensor therefore sees the same sweep relative
+	 * to its own time scale, so the effect is the same at every pitch. The sweep is a warp of
+	 * each sensor's demodulation clock: its phasor reads time + warp_i instead of time.
+	 * The deviation is held per sub-block of BANK_DITHER_BLOCK samples (sub-blocks carry over
+	 * between bank_process() calls), and warp_i is integrated exactly, so reseeds agree with
+	 * the running phasors. Receptor phases carry the sweep; magnitudes, and so the lifecycle,
+	 * need no correction. dither_depth == 0 leaves the per-sample loop unchanged.
 	 */
-	double     warp;            /* samples the demodulation clock is ahead of `time` */
 	double     dither_depth;    /* relative frequency deviation, e.g. 2^(cents/1200) - 1 */
-	double     dither_rate;     /* cycles per sample */
-	double     dither_phase;    /* radians */
-	bank_real *drot_re, *drot_im; /* per sensor [capacity]: the rotation for the current dither sub-block */
+	double     dither_windows;  /* sweep period, in each sensor's slowest receptor window */
+	int        dither_left;     /* samples left in the current sub-block (0: start a new one) */
+	double    *warp;            /* per sensor: clock warp at the start of the current sub-block, samples */
+	double    *warp_rate;       /* per sensor: warp gained per sample in the current sub-block */
+	double    *dz_re, *dz_im;   /* per sensor: sweep phasor e^{i phi} */
+	double    *dr_re, *dr_im;   /* per sensor: sweep phasor rotation per sub-block */
+	double    *dw;              /* per sensor: sweep angular rate, radians per sample */
+	bank_real *drot_re, *drot_im; /* per sensor: the phasor rotation for the current sub-block */
 };
 
 int  bank_init(struct receptor_bank *b, int scales, int capacity, double start_time);
@@ -81,8 +88,9 @@ void bank_free(struct receptor_bank *b);
 int  bank_add_sensor(struct receptor_bank *b, double period, double phase, const double *period_factors);
 /* Recompute phasors exactly from `time` (called automatically every reseed_interval samples). */
 void bank_reseed(struct receptor_bank *b);
-/* Micro-glissando of every sensor's centre frequency: relative depth (0 disables), rate in cycles per sample. */
-void bank_set_dither(struct receptor_bank *b, double depth, double rate);
+/* Micro-glissando: relative depth of every sensor's centre-frequency sweep (0 disables), and its
+   period in units of each sensor's slowest receptor window. Call after or before adding sensors. */
+void bank_set_dither(struct receptor_bank *b, double depth, double windows);
 /* Advance every receptor by the n samples in x. */
 void bank_process(struct receptor_bank *b, const float *x, int n);
 

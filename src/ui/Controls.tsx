@@ -1,5 +1,5 @@
 import type { BankParams, DitherParams, ViewParams } from "../lib/types";
-import { Brightness, Colour } from "../lib/types";
+import { Brightness, Colour, slowestWindowSeconds } from "../lib/types";
 import type { MicState } from "../lib/useMicBank";
 
 interface Props {
@@ -172,25 +172,29 @@ export function Controls(props: Props) {
             </label>
             <Slider
               label="depth"
-              value={dither.cents}
-              min={1}
-              max={50}
-              unit=" ¢"
-              onChange={(v) => setDither({ ...dither, cents: v })}
+              value={dither.depth}
+              min={0.1}
+              max={1}
+              step={0.05}
+              digits={2}
+              unit=" bin"
+              onChange={(v) => setDither({ ...dither, depth: v })}
             />
             <Slider
-              label="rate"
-              value={dither.hz}
-              min={0.25}
-              max={10}
-              step={0.25}
-              digits={2}
-              unit=" Hz"
-              onChange={(v) => setDither({ ...dither, hz: v })}
+              label="period"
+              value={dither.windows}
+              min={3}
+              max={32}
+              unit=" win"
+              onChange={(v) => setDither({ ...dither, windows: v })}
             />
             <div className="note">
-              a steady tone fades from the tonal model; a slow, shallow sweep (about half a bin,
-              ~1 Hz) keeps it visible and separates close tones
+              ±{((dither.depth * 1200) / bank.bins).toFixed(1)} ¢, one sweep per{" "}
+              {dither.windows} receptor windows —{" "}
+              {(dither.windows * slowestWindowSeconds(bank.q, 440)).toFixed(1)} s at 440 Hz,{" "}
+              {(dither.windows * slowestWindowSeconds(bank.q, 55)).toFixed(0)} s at 55 Hz.
+              A steady tone fades from the tonal model; the sweep keeps it visible and separates
+              close tones. Lower notes sweep more slowly, in proportion to their longer windows.
             </div>
           </fieldset>
 

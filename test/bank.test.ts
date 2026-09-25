@@ -27,7 +27,7 @@ interface BankExports {
   bank_wasm_frame: () => number;
   bank_wasm_frame_size: () => number;
   bank_wasm_block: () => number;
-  bank_wasm_set_dither: (cents: number, hz: number) => void;
+  bank_wasm_set_dither: (cents: number, windows: number) => void;
   bank_wasm_free: () => void;
 }
 
@@ -139,8 +139,8 @@ for (const file of ["bank_f32.wasm", "bank.wasm"]) {
       // mean tonal-model brightness (recept.c pc) around the 440 Hz sensor over the last 2 s
       // of a 5 s tone, i.e. after the onset has passed
       const ex = await instantiate(file);
-      const tonal = (cents: number, hz: number) => {
-        ex.bank_wasm_set_dither(cents, hz);
+      const tonal = (cents: number, windows: number) => {
+        ex.bank_wasm_set_dither(cents, windows);
         const frames = runTone(ex, 440, 5);
         let sum = 0;
         let n = 0;
@@ -157,7 +157,8 @@ for (const file of ["bank_f32.wasm", "bank.wasm"]) {
         return sum / n;
       };
       const still = tonal(0, 0);
-      const swept = tonal(6, 1);
+      // the default: 0.35 of a 12-cent bin, one sweep per 12 receptor windows
+      const swept = tonal(0.35 * 12, 12);
       // the setting survives re-initialisation (runTone re-inits), and it matters:
       // without it the steady tone has faded almost to nothing
       expect(swept).toBeGreaterThan(5 * still);

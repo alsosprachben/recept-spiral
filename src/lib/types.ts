@@ -30,17 +30,19 @@ export interface BankParams {
 }
 
 /**
- * Micro-glissando: every receptor's centre frequency sweeps sinusoidally by ±cents at hz,
- * the auditory analogue of fixational eye movements. A steady tone otherwise fades from the
- * tonal receptor model (it has no onset left to report); a slow sweep keeps turning its
- * spectral position into temporal change. Changing it never re-initialises the bank.
+ * Micro-glissando: every receptor's centre frequency sweeps sinusoidally, the auditory
+ * analogue of fixational eye movements. A steady tone otherwise fades from the tonal receptor
+ * model (it has no onset left to report); a slow sweep keeps turning its spectral position
+ * into temporal change. Both settings are scale-covariant — relative to the bin spacing and
+ * to each sensor's own receptor window — so the sweep acts the same at every pitch.
+ * Changing it never re-initialises the bank.
  */
 export interface DitherParams {
   enabled: boolean;
-  /** peak deviation of every centre frequency, cents */
-  cents: number;
-  /** sweep rate, Hz */
-  hz: number;
+  /** peak deviation of every centre frequency, as a fraction of the bin spacing */
+  depth: number;
+  /** sweep period, in each sensor's own (slowest) receptor window */
+  windows: number;
 }
 
 /** Brightness source: which quantity drives pixel intensity. */
@@ -118,15 +120,20 @@ export const DEFAULT_BANK: BankParams = {
   precision: "f32",
 };
 
-// Half the default bin spacing (1200 / 96 = 12.5 cents) at a microsaccade-like rate: the
-// setting that both kept steady tones visible and resolved tones 3 bins apart in
-// recept/dither_test.c. Deeper sweeps smear neighbouring tones together; sweeps faster than
-// the receptor window (~5 Hz and up at q = 96) average out and do nothing.
+// From recept/dither_test.c at 55–3520 Hz: 0.35 bin every 12 windows separated tones 3 bins
+// apart best at every pitch (contrast 0.77–1.0) at near-full brightness. Half a bin is ~12%
+// brighter but separates less; periods under ~6 windows average out; deeper sweeps smear.
 export const DEFAULT_DITHER: DitherParams = {
   enabled: false,
-  cents: 6,
-  hz: 1,
+  depth: 0.35,
+  windows: 12,
 };
+
+/** A sensor's slowest receptor window in seconds (bank_array: period_bandwidth / cycle_area periods). */
+export function slowestWindowSeconds(q: number, hz: number): number {
+  const cycleArea = 1 / (1 - Math.exp(-1));
+  return 1 / (Math.pow(2, 1 / q) - 1) / cycleArea / hz;
+}
 
 export const DEFAULT_VIEW: ViewParams = {
   floor: 0,

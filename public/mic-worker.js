@@ -8,8 +8,9 @@
 //
 // Messages in:  {type:'init', sampleRate, bins, octaves, fRef, q, frameRate, stride,
 //                bandwidth, precision:'f32'|'f64'}
-//               {type:'dither', cents, hz}  micro-glissando of every sensor, 0 cents = off;
-//                                          kept across re-inits and wasm reloads
+//               {type:'dither', cents, windows}  micro-glissando: every sensor's centre sweeps
+//                                          +-cents, one cycle per `windows` of its own receptor
+//                                          window; 0 cents = off; kept across re-inits and reloads
 //               Float32Array — one audio block, nominally +-1
 //               {type:'stop'}
 // Messages out: {type:'ready', sensors, block, sampleRate}
@@ -25,7 +26,7 @@ let inputCap = 0;
 let block = 0;
 let sampleRate = 44100;
 
-let dither = { cents: 0, hz: 0 };
+let dither = { cents: 0, windows: 0 };
 
 let procMs = 0;  // smoothed wasm time per produced frame
 let accumMs = 0; // time spent since the last produced frame
@@ -57,7 +58,7 @@ async function load(file) {
 function applyDither() {
   // older builds of the bank have no dither export; ignore rather than fail
   if (wasm && wasm.exports.bank_wasm_set_dither) {
-    wasm.exports.bank_wasm_set_dither(dither.cents, dither.hz);
+    wasm.exports.bank_wasm_set_dither(dither.cents, dither.windows);
   }
 }
 
@@ -130,7 +131,7 @@ onmessage = async (ev) => {
     if (d instanceof Float32Array) {
       handleAudio(d);
     } else if (d && d.type === "dither") {
-      dither = { cents: d.cents, hz: d.hz };
+      dither = { cents: d.cents, windows: d.windows };
       applyDither();
     } else if (d && d.type === "init") {
       await handleInit(d);

@@ -58,15 +58,19 @@ Narrower bells cost time: the window is ~`1/(2^(1/q) − 1)` periods, so at `q =
 receptor takes about 200 ms to rise at 440 Hz and 1.6 s at 55 Hz. That trade is exact for a
 one-pole filter — it is the bandwidth–time product, not an implementation limit.
 
-**micro-glissando** sweeps every receptor's centre frequency sinusoidally by ± *depth*
-cents at *rate* Hz — the auditory analogue of the eye's fixational movements. The tonal
-receptor model responds to change, so a perfectly steady tone fades from it, the way a
-stabilised image fades from vision; a slow, shallow sweep keeps converting the tone's
-spectral position into temporal change. In `recept/dither_test.c`, about half a bin
-(6 ¢) at ~1 Hz kept steady tones visible and separated two tones 37.5 ¢ apart that are
-otherwise unresolved. Sweeps deeper than about half the tone spacing smear neighbours
-together, and sweeps faster than the receptor window (~5 Hz and up at `q = 96`) average
-out. Expect the arms to pulse at the sweep rate — that is the sweep being seen.
+**micro-glissando** sweeps every receptor's centre frequency sinusoidally — the auditory
+analogue of the eye's fixational movements. The tonal receptor model responds to change, so a
+perfectly steady tone fades from it, the way a stabilised image fades from vision; a slow,
+shallow sweep keeps converting the tone's spectral position into temporal change.
+
+Both settings are scale-covariant, so the sweep acts the same at every pitch: **depth** is a
+fraction of the bin spacing, and **period** is counted in each sensor's own (slowest)
+receptor window, so low notes sweep slowly and high notes quickly. In
+`recept/dither_test.c` (55–3520 Hz), the default — 0.35 bin every 12 windows — kept steady
+tones visible and separated tones 3 bins apart at every pitch (contrast 0.77–1.0, versus
+invisible without the sweep), without adding any tonal response to noise. Periods under
+about 6 windows average out; depths over about half a bin smear neighbours together. Expect
+the arms to pulse slowly — that is the sweep being seen.
 
 The other controls are display-only: **floor**/**range** set the dB window mapped to black
 and to full brightness, **decay** adds visual persistence (0 is honest — the receptors

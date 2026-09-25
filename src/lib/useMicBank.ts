@@ -43,8 +43,13 @@ function initMessage(params: BankParams, sampleRate: number) {
   };
 }
 
-function ditherMessage(d: DitherParams) {
-  return { type: "dither" as const, cents: d.enabled ? d.cents : 0, hz: d.hz };
+/** The depth is a fraction of the bin spacing, so it follows the (auto-scaled) bin count. */
+function ditherMessage(d: DitherParams, bins: number) {
+  return {
+    type: "dither" as const,
+    cents: d.enabled ? (d.depth * 1200) / bins : 0,
+    windows: d.windows,
+  };
 }
 
 function sameParams(a: BankParams | null, b: BankParams): boolean {
@@ -234,7 +239,7 @@ export function useMicBank(
       };
 
       sentRef.current = { ...paramsRef.current };
-      worker.postMessage(ditherMessage(ditherRef.current));
+      worker.postMessage(ditherMessage(ditherRef.current, paramsRef.current.bins));
       worker.postMessage(initMessage(paramsRef.current, ctx.sampleRate));
     } catch (e) {
       stop();
@@ -252,13 +257,14 @@ export function useMicBank(
     sentRef.current = { ...params };
     setInfo("reconfiguring…");
     onResetRef.current();
+    worker.postMessage(ditherMessage(ditherRef.current, params.bins));
     worker.postMessage(initMessage(params, ctx.sampleRate));
   }, [params]);
 
   // The dither is applied live; the worker keeps it across re-inits.
   useEffect(() => {
-    workerRef.current?.postMessage(ditherMessage(dither));
-  }, [dither.enabled, dither.cents, dither.hz]);
+    workerRef.current?.postMessage(ditherMessage(dither, paramsRef.current.bins));
+  }, [dither.enabled, dither.depth, dither.windows]);
 
   // Once a second: report the audio-side counters and notice a stall. Counting the blocks
   // the worklet delivers separates "capture stopped" from "the bank stopped keeping up".
