@@ -1,4 +1,4 @@
-import type { BankParams, ViewParams } from "../lib/types";
+import type { BankParams, DitherParams, ViewParams } from "../lib/types";
 import { Brightness, Colour } from "../lib/types";
 import type { MicState } from "../lib/useMicBank";
 
@@ -7,6 +7,8 @@ interface Props {
   setBank: (b: BankParams) => void;
   view: ViewParams;
   setView: (v: ViewParams) => void;
+  dither: DitherParams;
+  setDither: (d: DitherParams) => void;
   renderer: "auto" | "canvas2d";
   setRenderer: (r: "auto" | "canvas2d") => void;
   autoScale: boolean;
@@ -75,7 +77,7 @@ function NumberField(props: {
 }
 
 export function Controls(props: Props) {
-  const { bank, setBank, view, setView, renderer, setRenderer, autoScale, setAutoScale,
+  const { bank, setBank, view, setView, dither, setDither, renderer, setRenderer, autoScale, setAutoScale,
     autoNote, micState, micInfo, onStart, onStop, collapsed, setCollapsed } = props;
   const running = micState === "running" || micState === "starting";
   const receptors = bank.bins * bank.octaves * 3;
@@ -155,6 +157,41 @@ export function Controls(props: Props) {
             {micInfo ? (
               <div className={micState === "error" ? "note err" : "note"}>{micInfo}</div>
             ) : null}
+          </fieldset>
+
+          <fieldset>
+            <legend>micro-glissando</legend>
+            <label className="row">
+              <span>sweep receptors</span>
+              <input
+                type="checkbox"
+                checked={dither.enabled}
+                onChange={(e) => setDither({ ...dither, enabled: e.target.checked })}
+                title="Sweep every receptor's centre frequency slowly, like fixational eye movements"
+              />
+            </label>
+            <Slider
+              label="depth"
+              value={dither.cents}
+              min={1}
+              max={50}
+              unit=" ¢"
+              onChange={(v) => setDither({ ...dither, cents: v })}
+            />
+            <Slider
+              label="rate"
+              value={dither.hz}
+              min={0.25}
+              max={10}
+              step={0.25}
+              digits={2}
+              unit=" Hz"
+              onChange={(v) => setDither({ ...dither, hz: v })}
+            />
+            <div className="note">
+              a steady tone fades from the tonal model; a slow, shallow sweep (about half a bin,
+              ~1 Hz) keeps it visible and separates close tones
+            </div>
           </fieldset>
 
           <fieldset>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { versionedAsset } from "./assets";
-import type { AudioStats, BankParams, BankStats } from "./types";
+import type { AudioStats, BankParams, BankStats, DitherParams } from "./types";
 
 export type MicState = "idle" | "starting" | "running" | "error";
 
@@ -43,6 +43,10 @@ function initMessage(params: BankParams, sampleRate: number) {
   };
 }
 
+function ditherMessage(d: DitherParams) {
+  return { type: "dither" as const, cents: d.enabled ? d.cents : 0, hz: d.hz };
+}
+
 function sameParams(a: BankParams | null, b: BankParams): boolean {
   return !!a && a.bins === b.bins && a.octaves === b.octaves && a.fRef === b.fRef &&
     a.q === b.q && a.precision === b.precision;
@@ -72,6 +76,7 @@ const IDLE_AUDIO: AudioStats = {
  */
 export function useMicBank(
   params: BankParams,
+  dither: DitherParams,
   onFrame: (frame: ArrayBuffer, stats: BankStats) => void,
   onReset: () => void,
 ): MicBank {
@@ -100,6 +105,8 @@ export function useMicBank(
 
   const paramsRef = useRef(params);
   paramsRef.current = params;
+  const ditherRef = useRef(dither);
+  ditherRef.current = dither;
 
   const stop = useCallback(() => {
     runningRef.current = false;
@@ -227,6 +234,7 @@ export function useMicBank(
       };
 
       sentRef.current = { ...paramsRef.current };
+      worker.postMessage(ditherMessage(ditherRef.current));
       worker.postMessage(initMessage(paramsRef.current, ctx.sampleRate));
     } catch (e) {
       stop();
@@ -246,6 +254,11 @@ export function useMicBank(
     onResetRef.current();
     worker.postMessage(initMessage(params, ctx.sampleRate));
   }, [params]);
+
+  // The dither is applied live; the worker keeps it across re-inits.
+  useEffect(() => {
+    workerRef.current?.postMessage(ditherMessage(dither));
+  }, [dither.enabled, dither.cents, dither.hz]);
 
   // Once a second: report the audio-side counters and notice a stall. Counting the blocks
   // the worklet delivers separates "capture stopped" from "the bank stopped keeping up".

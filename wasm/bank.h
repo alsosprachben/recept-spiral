@@ -59,6 +59,20 @@ struct receptor_bank {
 	double time;                /* sample index of the next sample */
 	long   reseed_interval;     /* samples between exact (cos/sin) phasor reseeds; kills phase drift */
 	long   since_reseed;
+
+	/*
+	 * Micro-glissando: every demodulation frequency is scaled by 1 + dither_depth * sin(dither_phase),
+	 * with dither_phase advancing dither_rate cycles per sample. Because the scaling is the same
+	 * relative amount for every sensor, it is a warp of the demodulation clock: the phasors read
+	 * time + warp instead of time, where warp is the integral of the frequency deviation. The
+	 * receptors' own phases therefore carry the dither; magnitudes (and so the lifecycle) do not
+	 * need correcting. dither_depth == 0 disables it and leaves the per-sample loop unchanged.
+	 */
+	double     warp;            /* samples the demodulation clock is ahead of `time` */
+	double     dither_depth;    /* relative frequency deviation, e.g. 2^(cents/1200) - 1 */
+	double     dither_rate;     /* cycles per sample */
+	double     dither_phase;    /* radians */
+	bank_real *drot_re, *drot_im; /* per sensor [capacity]: the rotation for the current dither sub-block */
 };
 
 int  bank_init(struct receptor_bank *b, int scales, int capacity, double start_time);
@@ -67,6 +81,8 @@ void bank_free(struct receptor_bank *b);
 int  bank_add_sensor(struct receptor_bank *b, double period, double phase, const double *period_factors);
 /* Recompute phasors exactly from `time` (called automatically every reseed_interval samples). */
 void bank_reseed(struct receptor_bank *b);
+/* Micro-glissando of every sensor's centre frequency: relative depth (0 disables), rate in cycles per sample. */
+void bank_set_dither(struct receptor_bank *b, double depth, double rate);
 /* Advance every receptor by the n samples in x. */
 void bank_process(struct receptor_bank *b, const float *x, int n);
 

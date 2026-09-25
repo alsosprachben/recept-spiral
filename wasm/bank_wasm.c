@@ -11,6 +11,7 @@
  *   bank_wasm_process(n)           -> 1 if a frame was produced (every block of sr/frame_rate samples)
  *   bank_wasm_frame()              -> unsigned char* (RCP1 frame)
  *   bank_wasm_frame_size()         -> bytes
+ *   bank_wasm_set_dither(cents, hz) micro-glissando of every sensor (0 cents disables); kept across init
  *   bank_wasm_free()
  */
 #include <stdlib.h>
@@ -46,6 +47,8 @@ static float *g_block_buf = NULL;
 static unsigned char *g_frame = NULL;
 static size_t g_frame_size = 0;
 static struct frame_header g_hdr;
+static double g_dither_cents = 0.0;
+static double g_dither_hz = 0.0;
 
 #define EXPORT __attribute__((used, visibility("default")))
 
@@ -57,6 +60,18 @@ EXPORT void bank_wasm_free(void) {
 	free(g_input); g_input = NULL; g_input_cap = 0;
 	free(g_block_buf); g_block_buf = NULL;
 	free(g_frame); g_frame = NULL; g_frame_size = 0;
+}
+
+static void apply_dither(void) {
+	if (g_ready) {
+		bank_set_dither(&g_bank.bank, pow(2, g_dither_cents / 1200.0) - 1.0, g_dither_hz / g_hdr.sample_rate);
+	}
+}
+
+EXPORT void bank_wasm_set_dither(double cents, double hz) {
+	g_dither_cents = cents;
+	g_dither_hz = hz;
+	apply_dither();
 }
 
 EXPORT int bank_wasm_init(double sr, int bins, int octaves, double f_ref, double octave_div,
@@ -98,6 +113,7 @@ EXPORT int bank_wasm_init(double sr, int bins, int octaves, double f_ref, double
 	g_hdr.sensors = g_sensors;
 	g_hdr.channels = CHANNELS;
 	g_hdr.f_ref = (float) f_ref;
+	apply_dither();
 	return g_sensors;
 }
 

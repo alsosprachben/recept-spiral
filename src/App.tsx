@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from "react";
-import { DEFAULT_BANK, DEFAULT_VIEW } from "./lib/types";
-import type { BankParams, BankStats, RenderStats, ViewParams } from "./lib/types";
+import { DEFAULT_BANK, DEFAULT_DITHER, DEFAULT_VIEW } from "./lib/types";
+import type { BankParams, BankStats, DitherParams, RenderStats, ViewParams } from "./lib/types";
 import { useAutoScale } from "./lib/useAutoScale";
 import { useMicBank } from "./lib/useMicBank";
 import { SpiralView } from "./render/SpiralView";
@@ -11,6 +11,7 @@ import { StatusBar } from "./ui/StatusBar";
 export function App() {
   const [bank, setBank] = useState<BankParams>(DEFAULT_BANK);
   const [view, setView] = useState<ViewParams>(DEFAULT_VIEW);
+  const [dither, setDither] = useState<DitherParams>(DEFAULT_DITHER);
   const [renderer, setRenderer] = useState<"auto" | "canvas2d">("auto");
   const [autoScale, setAutoScale] = useState(true);
   const [collapsed, setCollapsed] = useState(false);
@@ -41,7 +42,7 @@ export function App() {
   const sampleBank = useCallback(() => bankStatsRef.current, []);
   const auto = useAutoScale(bank, autoScale, sampleBank);
 
-  const mic = useMicBank(auto.effective, onFrame, onReset);
+  const mic = useMicBank(auto.effective, dither, onFrame, onReset);
   const running = mic.state === "running" || mic.state === "starting";
 
   return (
@@ -53,6 +54,8 @@ export function App() {
         setBank={setBank}
         view={view}
         setView={setView}
+        dither={dither}
+        setDither={setDither}
         renderer={renderer}
         setRenderer={setRenderer}
         autoScale={autoScale}

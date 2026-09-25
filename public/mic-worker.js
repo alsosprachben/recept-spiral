@@ -8,6 +8,8 @@
 //
 // Messages in:  {type:'init', sampleRate, bins, octaves, fRef, q, frameRate, stride,
 //                bandwidth, precision:'f32'|'f64'}
+//               {type:'dither', cents, hz}  micro-glissando of every sensor, 0 cents = off;
+//                                          kept across re-inits and wasm reloads
 //               Float32Array — one audio block, nominally +-1
 //               {type:'stop'}
 // Messages out: {type:'ready', sensors, block, sampleRate}
@@ -22,6 +24,8 @@ let inputPtr = 0;
 let inputCap = 0;
 let block = 0;
 let sampleRate = 44100;
+
+let dither = { cents: 0, hz: 0 };
 
 let procMs = 0;  // smoothed wasm time per produced frame
 let accumMs = 0; // time spent since the last produced frame
@@ -48,6 +52,13 @@ async function load(file) {
   wasmFile = file;
   mem = new Uint8Array(wasm.exports.memory.buffer);
   if (wasm.exports._initialize) wasm.exports._initialize();
+}
+
+function applyDither() {
+  // older builds of the bank have no dither export; ignore rather than fail
+  if (wasm && wasm.exports.bank_wasm_set_dither) {
+    wasm.exports.bank_wasm_set_dither(dither.cents, dither.hz);
+  }
 }
 
 function refreshMem() {
@@ -103,6 +114,7 @@ async function handleInit(d) {
     d.sampleRate, d.bins, d.octaves, d.fRef, d.q, d.frameRate, d.stride, d.bandwidth,
   );
   if (sensors < 0) throw new Error("bank_wasm_init failed (out of memory?)");
+  applyDither();
   block = wasm.exports.bank_wasm_block();
   inputCap = 0;
   ensureInput(4096);
@@ -117,6 +129,9 @@ onmessage = async (ev) => {
   try {
     if (d instanceof Float32Array) {
       handleAudio(d);
+    } else if (d && d.type === "dither") {
+      dither = { cents: d.cents, hz: d.hz };
+      applyDither();
     } else if (d && d.type === "init") {
       await handleInit(d);
     } else if (d && d.type === "stop") {

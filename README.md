@@ -58,6 +58,16 @@ Narrower bells cost time: the window is ~`1/(2^(1/q) − 1)` periods, so at `q =
 receptor takes about 200 ms to rise at 440 Hz and 1.6 s at 55 Hz. That trade is exact for a
 one-pole filter — it is the bandwidth–time product, not an implementation limit.
 
+**micro-glissando** sweeps every receptor's centre frequency sinusoidally by ± *depth*
+cents at *rate* Hz — the auditory analogue of the eye's fixational movements. The tonal
+receptor model responds to change, so a perfectly steady tone fades from it, the way a
+stabilised image fades from vision; a slow, shallow sweep keeps converting the tone's
+spectral position into temporal change. In `recept/dither_test.c`, about half a bin
+(6 ¢) at ~1 Hz kept steady tones visible and separated two tones 37.5 ¢ apart that are
+otherwise unresolved. Sweeps deeper than about half the tone spacing smear neighbours
+together, and sweeps faster than the receptor window (~5 Hz and up at `q = 96`) average
+out. Expect the arms to pulse at the sweep rate — that is the sweep being seen.
+
 The other controls are display-only: **floor**/**range** set the dB window mapped to black
 and to full brightness, **decay** adds visual persistence (0 is honest — the receptors
 already integrate), **band** is the arm width, and **resolution** is the render backing

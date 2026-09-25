@@ -27,6 +27,7 @@ interface BankExports {
   bank_wasm_frame: () => number;
   bank_wasm_frame_size: () => number;
   bank_wasm_block: () => number;
+  bank_wasm_set_dither: (cents: number, hz: number) => void;
   bank_wasm_free: () => void;
 }
 
@@ -131,6 +132,35 @@ for (const file of ["bank_f32.wasm", "bank.wasm"]) {
       expect(peakFreq).toBeGreaterThan(430);
       expect(peakFreq).toBeLessThan(450);
 
+      ex.bank_wasm_free();
+    });
+
+    test("micro-glissando keeps a steady tone visible in the tonal model", async () => {
+      // mean tonal-model brightness (recept.c pc) around the 440 Hz sensor over the last 2 s
+      // of a 5 s tone, i.e. after the onset has passed
+      const ex = await instantiate(file);
+      const tonal = (cents: number, hz: number) => {
+        ex.bank_wasm_set_dither(cents, hz);
+        const frames = runTone(ex, 440, 5);
+        let sum = 0;
+        let n = 0;
+        for (const f of frames.slice(-120)) {
+          const h = parse(f);
+          const data = new Float32Array(f, h.headerSize, h.sensors * h.channels);
+          for (let i = 4 * BINS - 2; i <= 4 * BINS + 2; i++) {
+            const F = data[i * h.channels + 1];
+            const energy = data[i * h.channels + 3];
+            sum += energy < 0 ? Math.hypot(energy, F) : 0;
+          }
+          n++;
+        }
+        return sum / n;
+      };
+      const still = tonal(0, 0);
+      const swept = tonal(6, 1);
+      // the setting survives re-initialisation (runTone re-inits), and it matters:
+      // without it the steady tone has faded almost to nothing
+      expect(swept).toBeGreaterThan(5 * still);
       ex.bank_wasm_free();
     });
   });

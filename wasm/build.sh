@@ -13,7 +13,7 @@
 set -e
 cd "$(dirname "$0")"
 
-EXPORTS=_bank_wasm_init,_bank_wasm_free,_bank_wasm_input,_bank_wasm_process,_bank_wasm_frame,_bank_wasm_frame_size,_bank_wasm_block,_malloc,_free
+EXPORTS=_bank_wasm_init,_bank_wasm_free,_bank_wasm_input,_bank_wasm_process,_bank_wasm_frame,_bank_wasm_frame_size,_bank_wasm_block,_bank_wasm_set_dither,_malloc,_free
 COMMON="-O3 -msimd128 -fopenmp-simd -sSTANDALONE_WASM --no-entry -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=64MB -sEXPORTED_FUNCTIONS=$EXPORTS"
 
 # float64: bit-identical to the native build

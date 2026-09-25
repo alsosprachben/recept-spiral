@@ -60,6 +60,8 @@ int bank_init(struct receptor_bank *b, int scales, int capacity, double start_ti
 	b->v_im   = bank_alloc(sn, sizeof (bank_real));
 	b->acc_r = bank_alloc(sn, sizeof (bank_real));
 	b->period_factor = bank_alloc(sn, sizeof (double));
+	b->drot_re = bank_alloc(n, sizeof (bank_real));
+	b->drot_im = bank_alloc(n, sizeof (bank_real));
 	b->acc_n = 0;
 	b->beta = 0;
 	b->r_stride = 1;
@@ -67,7 +69,8 @@ int bank_init(struct receptor_bank *b, int scales, int capacity, double start_ti
 
 	if (b->osc_re == NULL || b->osc_im == NULL || b->rot_re == NULL || b->rot_im == NULL ||
 	    b->period == NULL || b->phase == NULL || b->alpha == NULL || b->v_re == NULL ||
-	    b->v_im == NULL || b->acc_r == NULL || b->period_factor == NULL) {
+	    b->v_im == NULL || b->acc_r == NULL || b->period_factor == NULL ||
+	    b->drot_re == NULL || b->drot_im == NULL) {
 		bank_free(b);
 		return -1;
 	}
@@ -75,6 +78,7 @@ int bank_init(struct receptor_bank *b, int scales, int capacity, double start_ti
 	/* unused rows must be harmless: rot = 1, alpha = 0 */
 	for (size_t i = 0; i < n; i++) {
 		b->rot_re[i] = 1;
+		b->drot_re[i] = 1;
 		b->osc_re[i] = 1;
 	}
 	return 0;
@@ -86,11 +90,12 @@ void bank_free(struct receptor_bank *b) {
 	free(b->period); free(b->phase);
 	free(b->alpha);  free(b->v_re); free(b->v_im); free(b->acc_r);
 	free(b->period_factor);
+	free(b->drot_re); free(b->drot_im);
 	memset(b, 0, sizeof (*b));
 }
 
 static void bank_seed_sensor(struct receptor_bank *b, int i) {
-	double tau = (b->time + b->phase[i]) / b->period[i];
+	double tau = (b->time + b->warp + b->phase[i]) / b->period[i];
 	double rad = tau2rad(tau);
 	b->osc_re[i] = (bank_real) cos(rad);
 	b->osc_im[i] = (bank_real) sin(rad);
@@ -152,11 +157,10 @@ void bank_reseed(struct receptor_bank *b) {
  * Within a sample, the phasor rotation and the per-scale smoother updates are
  * separate SIMD loops over the chunk, communicating through small stack arrays.
  */
-static void bank_process_chunk(struct receptor_bank *b, int c0, int c1, const float *x, int n) {
+static void bank_process_chunk(struct receptor_bank *b, int c0, int c1, const float *x, int n,
+                               const bank_real * restrict rot_re, const bank_real * restrict rot_im) {
 	bank_real * restrict osc_re = b->osc_re;
 	bank_real * restrict osc_im = b->osc_im;
-	const bank_real * restrict rot_re = b->rot_re;
-	const bank_real * restrict rot_im = b->rot_im;
 	const bank_real * restrict alpha = b->alpha;
 	bank_real * restrict v_re = b->v_re;
 	bank_real * restrict v_im = b->v_im;
@@ -229,18 +233,52 @@ static void bank_process_chunk(struct receptor_bank *b, int c0, int c1, const fl
 	}
 }
 
-void bank_process(struct receptor_bank *b, const float *x, int n) {
+void bank_set_dither(struct receptor_bank *b, double depth, double rate) {
+	/* warp is kept when the dither stops, so the phasors stay continuous with the next reseed */
+	b->dither_depth = depth;
+	b->dither_rate = rate;
+}
+
+/*
+ * Set drot to each sensor's rotation for the next m samples of dither, and advance the warp.
+ * The frequency deviation depth * sin(phase) is held at its mean over the sub-block, so the
+ * warp gained over the sub-block is exact and the phasors agree with bank_seed_sensor().
+ */
+static void bank_dither_rotation(struct receptor_bank *b, int m) {
+	const double w = tau2rad(b->dither_rate);
+	const double p0 = b->dither_phase;
+	double dwarp, delta;
+	int i;
+
+	if (w != 0.0) {
+		dwarp = b->dither_depth * (cos(p0) - cos(p0 + w * m)) / w;
+	} else {
+		dwarp = b->dither_depth * sin(p0) * m;
+	}
+	delta = dwarp / m;
+	b->warp += dwarp;
+	b->dither_phase = fmod(p0 + w * m, tau2rad(1.0));
+
+	/* rot * e^{i a}, a = 2 pi delta / period: a is small (|delta| < ~3%), so a 3rd-order series is plenty */
+	for (i = 0; i < b->count; i++) {
+		double a = tau2rad(delta / b->period[i]);
+		double c = 1.0 - 0.5 * a * a;
+		double s = a - a * a * a / 6.0;
+		double r_re = b->rot_re[i], r_im = b->rot_im[i];
+		b->drot_re[i] = (bank_real) (r_re * c - r_im * s);
+		b->drot_im[i] = (bank_real) (r_re * s + r_im * c);
+	}
+}
+
+static void bank_process_block(struct receptor_bank *b, const float *x, int n,
+                               const bank_real *rot_re, const bank_real *rot_im) {
 	const int M = b->count;
 	int c0;
-
-	if (n <= 0) {
-		return;
-	}
 
 	#pragma omp parallel for schedule(static)
 	for (c0 = 0; c0 < M; c0 += BANK_CHUNK) {
 		int c1 = c0 + BANK_CHUNK < M ? c0 + BANK_CHUNK : M;
-		bank_process_chunk(b, c0, c1, x, n);
+		bank_process_chunk(b, c0, c1, x, n, rot_re, rot_im);
 	}
 
 	b->time += n;
@@ -252,5 +290,27 @@ void bank_process(struct receptor_bank *b, const float *x, int n) {
 	b->since_reseed += n;
 	if (b->since_reseed >= b->reseed_interval) {
 		bank_reseed(b);
+	}
+}
+
+/* samples per dither sub-block: the frequency deviation is stepped at sr / 64 (~700 Hz) */
+#ifndef BANK_DITHER_BLOCK
+#define BANK_DITHER_BLOCK 64
+#endif
+
+void bank_process(struct receptor_bank *b, const float *x, int n) {
+	if (n <= 0) {
+		return;
+	}
+	if (b->dither_depth == 0.0) {
+		bank_process_block(b, x, n, b->rot_re, b->rot_im);
+		return;
+	}
+	while (n > 0) {
+		int m = n < BANK_DITHER_BLOCK ? n : BANK_DITHER_BLOCK;
+		bank_dither_rotation(b, m);
+		bank_process_block(b, x, m, b->drot_re, b->drot_im);
+		x += m;
+		n -= m;
 	}
 }

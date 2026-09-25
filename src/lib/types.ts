@@ -29,6 +29,20 @@ export interface BankParams {
   precision: "f32" | "f64";
 }
 
+/**
+ * Micro-glissando: every receptor's centre frequency sweeps sinusoidally by ±cents at hz,
+ * the auditory analogue of fixational eye movements. A steady tone otherwise fades from the
+ * tonal receptor model (it has no onset left to report); a slow sweep keeps turning its
+ * spectral position into temporal change. Changing it never re-initialises the bank.
+ */
+export interface DitherParams {
+  enabled: boolean;
+  /** peak deviation of every centre frequency, cents */
+  cents: number;
+  /** sweep rate, Hz */
+  hz: number;
+}
+
 /** Brightness source: which quantity drives pixel intensity. */
 export const enum Brightness {
   /** smoothed receptor magnitude */
@@ -102,6 +116,16 @@ export const DEFAULT_BANK: BankParams = {
   fRef: 27.5,
   q: 96,
   precision: "f32",
+};
+
+// Half the default bin spacing (1200 / 96 = 12.5 cents) at a microsaccade-like rate: the
+// setting that both kept steady tones visible and resolved tones 3 bins apart in
+// recept/dither_test.c. Deeper sweeps smear neighbouring tones together; sweeps faster than
+// the receptor window (~5 Hz and up at q = 96) average out and do nothing.
+export const DEFAULT_DITHER: DitherParams = {
+  enabled: false,
+  cents: 6,
+  hz: 1,
 };
 
 export const DEFAULT_VIEW: ViewParams = {
